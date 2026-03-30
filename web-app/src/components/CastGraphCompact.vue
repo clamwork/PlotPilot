@@ -12,17 +12,19 @@
     <div v-if="emptyHint" class="cgc-empty">
       <n-empty description="尚无人物节点，可在完整页添加" size="small" />
     </div>
-    <div ref="containerRef" class="cgc-canvas" />
+    <div v-else class="cgc-canvas">
+      <GraphChart :nodes="nodes" :links="links" height="100%" @node-click="handleNodeClick" />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { Network } from 'vis-network'
-import { DataSet } from 'vis-data'
-import 'vis-network/styles/vis-network.css'
 import { bookApi } from '../api/book'
+import GraphChart from './charts/GraphChart.vue'
+import { convertGraph, type VisNode, type VisEdge } from '../utils/visToEcharts'
+import type { EChartsNode, EChartsLink } from '../utils/visToEcharts'
 
 const props = defineProps<{ slug: string }>()
 const router = useRouter()
@@ -47,19 +49,16 @@ interface CastRelationship {
   story_events?: unknown[]
 }
 
-const containerRef = ref<HTMLElement | null>(null)
 const loading = ref(false)
 const graph = ref<{ characters: CastCharacter[]; relationships: CastRelationship[] }>({
   characters: [],
   relationships: [],
 })
 
-let network: Network | null = null
-
 const emptyHint = computed(() => graph.value.characters.length === 0 && !loading.value)
 
-const buildVisData = () => {
-  const nodes = graph.value.characters.map(c => {
+const graphData = computed(() => {
+  const visNodes: VisNode[] = graph.value.characters.map(c => {
     const ne = (c.story_events || []).length
     const base = [c.name, ...(c.aliases || []), c.traits, c.note].filter(Boolean).join('\n')
     return {
@@ -68,9 +67,12 @@ const buildVisData = () => {
       title: ne ? `${base}\n—\n人物线事件 ${ne} 条` : base,
       color: { background: '#c7d2fe', border: '#6366f1' },
       font: { size: 14 },
+      shape: 'box',
+      borderWidth: 2,
     }
   })
-  const edges = graph.value.relationships.map(r => {
+
+  const visEdges: VisEdge[] = graph.value.relationships.map(r => {
     const ne = (r.story_events || []).length
     const base = [r.label, r.note].filter(Boolean).join('\n')
     return {
@@ -83,39 +85,12 @@ const buildVisData = () => {
       font: { size: 11, align: 'middle' },
     }
   })
-  return {
-    nodes: new DataSet(nodes),
-    edges: new DataSet(edges),
-  }
-}
 
-const redraw = async () => {
-  await nextTick()
-  if (!containerRef.value) return
-  const { nodes, edges } = buildVisData()
-  const data = { nodes, edges }
-  const options = {
-    physics: { stabilization: { iterations: 120 } },
-    edges: { smooth: false },
-    nodes: {
-      shape: 'box',
-      margin: { top: 8, right: 10, bottom: 8, left: 10 },
-      borderWidth: 2,
-    },
-    interaction: { hover: true, multiselect: false },
-  }
-  if (network) {
-    network.setData(data)
-    network.stabilize()
-  } else {
-    network = new Network(containerRef.value, data, options)
-    network.on('click', params => {
-      if (!params.nodes.length) return
-      const id = String(params.nodes[0])
-      router.push({ path: `/book/${props.slug}/cast`, query: { focus: id } })
-    })
-  }
-}
+  return convertGraph(visNodes, visEdges)
+})
+
+const nodes = computed(() => graphData.value.nodes)
+const links = computed(() => graphData.value.links)
 
 const reload = async () => {
   loading.value = true
@@ -125,10 +100,13 @@ const reload = async () => {
       characters: data.characters || [],
       relationships: data.relationships || [],
     }
-    await redraw()
   } finally {
     loading.value = false
   }
+}
+
+const handleNodeClick = (node: EChartsNode) => {
+  router.push({ path: `/book/${props.slug}/cast`, query: { focus: node.id } })
 }
 
 const goFull = () => {
@@ -138,8 +116,6 @@ const goFull = () => {
 watch(
   () => props.slug,
   () => {
-    network?.destroy()
-    network = null
     void reload()
   }
 )
@@ -147,11 +123,6 @@ watch(
 onMounted(async () => {
   await nextTick()
   await reload()
-})
-
-onUnmounted(() => {
-  network?.destroy()
-  network = null
 })
 </script>
 
