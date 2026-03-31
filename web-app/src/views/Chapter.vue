@@ -143,6 +143,7 @@ import { useMessage } from 'naive-ui'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { bookApi } from '../api/book'
+import { chapterApi } from '../api/chapter'
 import { useStatsStore } from '../stores/statsStore'
 
 const route = useRoute()
@@ -271,7 +272,10 @@ const saveContent = async () => {
   saveStatus.value = 'saving'
 
   try {
-    await bookApi.saveChapterBody(slug, chapterId.value, content.value)
+    await chapterApi.updateChapter(slug, chapterId.value, {
+      title: '', // Title is not editable in this view, pass empty string
+      content: content.value
+    })
     saveStatus.value = 'saved'
     lastSaveTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     updateTime.value = new Date().toLocaleString('zh-CN', { hour12: false })
@@ -350,9 +354,9 @@ const loadChapter = async () => {
   }
 
   // Parallel execution of independent API calls
-  const [desk, body, rev, structureResult] = await Promise.allSettled([
+  const [desk, chapterData, rev, structureResult] = await Promise.allSettled([
     bookApi.getDesk(slug),
-    bookApi.getChapterBody(slug, cid),
+    chapterApi.getChapter(slug, cid),
     bookApi.getChapterReview(slug, cid),
     bookApi.getChapterStructure(slug, cid)
   ])
@@ -364,16 +368,16 @@ const loadChapter = async () => {
     console.error('Failed to load desk:', desk.reason)
   }
 
-  // Handle body API result
-  if (body.status === 'fulfilled') {
-    content.value = body.value.content || ''
+  // Handle chapter data API result
+  if (chapterData.status === 'fulfilled') {
+    content.value = chapterData.value.content || ''
     if (content.value) {
-      createTime.value = new Date().toLocaleString('zh-CN', { hour12: false })
-      updateTime.value = createTime.value
+      createTime.value = new Date(chapterData.value.created_at).toLocaleString('zh-CN', { hour12: false })
+      updateTime.value = new Date(chapterData.value.updated_at).toLocaleString('zh-CN', { hour12: false })
     }
     updatePreview(false)
   } else {
-    console.error('Failed to load chapter body:', body.reason)
+    console.error('Failed to load chapter:', chapterData.reason)
   }
 
   // Handle review API result
