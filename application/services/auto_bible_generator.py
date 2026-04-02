@@ -58,13 +58,15 @@ class AutoBibleGenerator:
 
         system_prompt = """你是资深网文策划编辑。根据小说标题，生成完整的人物和世界设定。
 
+**重要：只输出 JSON，不要有任何其他文字。**
+
 要求：
 1. 至少 3-5 个主要人物（主角、配角、对手、导师等），确保人物之间有冲突和互动
 2. 每个人物：姓名、定位（主角/配角/对手/导师）、性格特点、目标动机
 3. 至少 2-3 个重要地点
 4. 明确的文风公约（叙事视角、基调）
 
-以 JSON 格式输出：
+JSON 格式（不要有其他文字）：
 {
   "characters": [
     {
@@ -90,24 +92,32 @@ class AutoBibleGenerator:
 1. 人物要有层次，不能只有主角
 2. 要有明确的冲突和对立面
 3. 世界观要清晰
-4. 适合网文读者"""
+4. 适合网文读者
+
+只输出 JSON，不要有任何解释文字。"""
 
         prompt = Prompt(system=system_prompt, user=user_prompt)
-        config = GenerationConfig(max_tokens=2048, temperature=0.8)
+        config = GenerationConfig(max_tokens=2048, temperature=0.7)
 
         result = await self.llm_service.generate(prompt, config)
 
         # 解析 JSON
         try:
             content = result.content.strip()
+
             # 移除可能的 markdown 代码块标记
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
+
             content = content.strip()
+
+            # 尝试找到第一个 { 和最后一个 }
+            start = content.find('{')
+            end = content.rfind('}')
+            if start != -1 and end != -1:
+                content = content[start:end+1]
 
             bible_data = json.loads(content)
             return bible_data
