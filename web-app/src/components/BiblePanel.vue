@@ -47,32 +47,55 @@
       </n-space>
     </header>
 
-    <n-tabs v-model:value="viewMode" type="line" size="medium" animated class="bible-tabs">
-      <n-tab-pane name="editor" tab="可视化编辑">
+    <n-tabs v-model:value="mainTab" type="line" size="medium" animated class="bible-tabs">
+      <!-- 文风公约 Tab -->
+      <n-tab-pane name="style" tab="文风公约">
+        <div class="bible-subtab-header">
+          <n-select v-model:value="subTab" :options="subTabOptions" size="small" style="width: 140px" />
+        </div>
         <n-scrollbar class="bible-scroll">
-          <div class="bible-form">
-        <n-card size="small" class="bible-card" :bordered="false" :segmented="{ content: true, footer: false }">
-          <template #header>
-            <div class="bcard-head">
-              <span class="bcard-icon bcard-icon-text" aria-hidden="true">文</span>
-              <div>
-                <div class="bcard-title">叙事与风格公约</div>
-                <div class="bcard-desc">人称、时态、叙事距离、基调与禁区——全书的「怎么写」。</div>
-              </div>
-            </div>
-          </template>
-          <n-input
-            v-model:value="state.style_notes"
-            type="textarea"
-            :autosize="{ minRows: 5, maxRows: 22 }"
-            placeholder="建议写明：第三人称有限 / 全知；冷幽默或克制；是否允许破墙、血腥、感情线尺度；参考气质（勿抄原文）…"
-            show-count
-            :maxlength="12000"
-            class="bible-textarea"
-          />
-        </n-card>
+          <div v-if="subTab === 'editor'" class="bible-form">
+            <n-card size="small" class="bible-card" :bordered="false" :segmented="{ content: true, footer: false }">
+              <template #header>
+                <div class="bcard-head">
+                  <span class="bcard-icon bcard-icon-text" aria-hidden="true">文</span>
+                  <div>
+                    <div class="bcard-title">叙事与风格公约</div>
+                    <div class="bcard-desc">人称、时态、叙事距离、基调与禁区——全书的「怎么写」。</div>
+                  </div>
+                </div>
+              </template>
+              <n-input
+                v-model:value="state.style_notes"
+                type="textarea"
+                :autosize="{ minRows: 5, maxRows: 22 }"
+                placeholder="建议写明：第三人称有限 / 全知；冷幽默或克制；是否允许破墙、血腥、感情线尺度；参考气质（勿抄原文）…"
+                show-count
+                :maxlength="12000"
+                class="bible-textarea"
+              />
+            </n-card>
+          </div>
+          <div v-else class="bible-json">
+            <n-input
+              v-model:value="jsonRaw"
+              type="textarea"
+              :autosize="{ minRows: 20 }"
+              placeholder="JSON 格式"
+              class="bible-json-input"
+            />
+          </div>
+        </n-scrollbar>
+      </n-tab-pane>
 
-        <n-card size="small" class="bible-card" :bordered="false" :segmented="{ content: true, footer: false }">
+      <!-- 人物 Tab -->
+      <n-tab-pane name="characters" tab="人物">
+        <div class="bible-subtab-header">
+          <n-select v-model:value="subTab" :options="subTabOptions" size="small" style="width: 140px" />
+        </div>
+        <n-scrollbar class="bible-scroll">
+          <div v-if="subTab === 'editor'" class="bible-form">
+            <n-card size="small" class="bible-card" :bordered="false" :segmented="{ content: true, footer: false }">
           <template #header>
             <div class="bcard-head">
               <span class="bcard-icon" aria-hidden="true">◆</span>
@@ -134,8 +157,27 @@
             <n-button v-if="state.characters.length" dashed block @click="addChar">+ 添加人物</n-button>
           </n-space>
         </n-card>
+          </div>
+          <div v-else class="bible-json">
+            <n-input
+              v-model:value="jsonRaw"
+              type="textarea"
+              :autosize="{ minRows: 20 }"
+              placeholder="JSON 格式"
+              class="bible-json-input"
+            />
+          </div>
+        </n-scrollbar>
+      </n-tab-pane>
 
-        <n-card size="small" class="bible-card" :bordered="false" :segmented="{ content: true, footer: false }">
+      <!-- 地点/势力 Tab -->
+      <n-tab-pane name="locations" tab="地点/势力">
+        <div class="bible-subtab-header">
+          <n-select v-model:value="subTab" :options="subTabOptions" size="small" style="width: 140px" />
+        </div>
+        <n-scrollbar class="bible-scroll">
+          <div v-if="subTab === 'editor'" class="bible-form">
+            <n-card size="small" class="bible-card" :bordered="false" :segmented="{ content: true, footer: false }">
           <template #header>
             <div class="bcard-head">
               <span class="bcard-icon" aria-hidden="true">◇</span>
@@ -162,8 +204,27 @@
             <n-button dashed block @click="addLoc">+ 添加地点或势力</n-button>
           </n-space>
         </n-card>
+          </div>
+          <div v-else class="bible-json">
+            <n-input
+              v-model:value="jsonRaw"
+              type="textarea"
+              :autosize="{ minRows: 20 }"
+              placeholder="JSON 格式"
+              class="bible-json-input"
+            />
+          </div>
+        </n-scrollbar>
+      </n-tab-pane>
 
-        <n-card size="small" class="bible-card bible-card-last" :bordered="false" :segmented="{ content: true, footer: false }">
+      <!-- 时间线 Tab -->
+      <n-tab-pane name="timeline" tab="时间线">
+        <div class="bible-subtab-header">
+          <n-select v-model:value="subTab" :options="subTabOptions" size="small" style="width: 140px" />
+        </div>
+        <n-scrollbar class="bible-scroll">
+          <div v-if="subTab === 'editor'" class="bible-form">
+            <n-card size="small" class="bible-card bible-card-last" :bordered="false" :segmented="{ content: true, footer: false }">
           <template #header>
             <div class="bcard-head">
               <span class="bible-icon-timeline" aria-hidden="true" />
@@ -180,21 +241,19 @@
             placeholder="例：第三年冬 · 盟约订立；事件前先可空，随写随补"
           />
         </n-card>
-      </div>
-    </n-scrollbar>
-  </n-tab-pane>
-
-  <n-tab-pane name="json" tab="JSON">
-    <n-scrollbar class="bible-scroll">
-      <div class="bible-json-wrap">
-        <n-alert type="default" class="bible-json-alert" :bordered="false">
-          直接编辑 <code>bible.json</code> 等价结构；保存会覆盖表单。须可被后端 Bible 模型解析。
-        </n-alert>
-        <n-input v-model:value="jsonRaw" type="textarea" class="bible-json" placeholder="{ ... }" />
-      </div>
-    </n-scrollbar>
-  </n-tab-pane>
-</n-tabs>
+          </div>
+          <div v-else class="bible-json">
+            <n-input
+              v-model:value="jsonRaw"
+              type="textarea"
+              :autosize="{ minRows: 20 }"
+              placeholder="JSON 格式"
+              class="bible-json-input"
+            />
+          </div>
+        </n-scrollbar>
+      </n-tab-pane>
+    </n-tabs>
   </div>
 </template>
 
@@ -229,9 +288,15 @@ const emptyState = () => ({
 
 const state = ref(emptyState())
 const jsonRaw = ref('')
-const viewMode = ref<'editor' | 'json'>('editor')
+const mainTab = ref<'style' | 'characters' | 'locations' | 'timeline'>('style')
+const subTab = ref<'editor' | 'json'>('editor')
 const saving = ref(false)
 const generating = ref(false)
+
+const subTabOptions = [
+  { label: '可视化编辑', value: 'editor' },
+  { label: 'JSON', value: 'json' }
+]
 
 const stats = computed(() => {
   const namedChars = state.value.characters.filter(c => (c.name || '').trim()).length
@@ -351,7 +416,7 @@ const save = async () => {
   saving.value = true
   try {
     let payload: Record<string, unknown>
-    if (viewMode.value === 'json') {
+    if (subTab.value === 'json') {
       payload = JSON.parse(jsonRaw.value)
     } else {
       payload = {
@@ -364,7 +429,7 @@ const save = async () => {
     const apiData = toApiFormat(payload)
     await bibleApi.updateBible(props.slug, apiData)
     message.success('设定已保存')
-    if (viewMode.value === 'json') {
+    if (subTab.value === 'json') {
       await load()
     } else {
       syncJsonFromState()
@@ -406,7 +471,7 @@ const removeLoc = (i: number) => {
   state.value.locations.splice(i, 1)
 }
 
-watch(viewMode, v => {
+watch(subTab, v => {
   if (v === 'json') syncJsonFromState()
 })
 
@@ -569,6 +634,48 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.bible-tabs {
+  flex: 1;
+  min-height: 0;
+  padding-left: 16px;
+}
+
+.bible-tabs :deep(.n-tabs-nav) {
+  padding-bottom: 8px;
+}
+
+.bible-tabs :deep(.n-tabs-pane-wrapper) {
+  height: 100%;
+}
+
+.bible-subtab-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  background: #fafbfc;
+}
+
+.bible-scroll {
+  height: 100%;
+}
+
+.bible-form {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.bible-json {
+  padding: 16px;
+  height: 100%;
+}
+
+.bible-json-input :deep(textarea) {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .bible-card {
