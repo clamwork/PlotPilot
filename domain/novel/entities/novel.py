@@ -8,11 +8,21 @@ from domain.shared.exceptions import InvalidOperationError
 
 
 class NovelStage(str, Enum):
-    """小说阶段"""
-    PLANNING = "planning"
-    WRITING = "writing"
-    REVIEWING = "reviewing"
+    """小说阶段（细化为自动驾驶状态机）"""
+    PLANNING = "planning"  # 旧版兼容
+    MACRO_PLANNING = "macro_planning"  # 规划部/卷/幕
+    ACT_PLANNING = "act_planning"  # 规划当前幕的章节（插入缓冲章）
+    WRITING = "writing"  # 写正文（节拍放大器）
+    AUDITING = "auditing"  # 审计：文风、伏笔、图谱
+    REVIEWING = "reviewing"  # 旧版兼容
     COMPLETED = "completed"
+
+
+class AutopilotStatus(str, Enum):
+    """自动驾驶状态"""
+    STOPPED = "stopped"  # 人工接管/暂停
+    RUNNING = "running"  # 全托管狂奔中
+    ERROR = "error"  # 遇到阻断性错误，挂起等待急救
 
 
 class Novel(BaseEntity):
@@ -25,7 +35,11 @@ class Novel(BaseEntity):
         author: str,
         target_chapters: int,
         premise: str = "",
-        stage: NovelStage = NovelStage.PLANNING
+        stage: NovelStage = NovelStage.PLANNING,
+        autopilot_status: AutopilotStatus = AutopilotStatus.STOPPED,
+        current_stage: NovelStage = NovelStage.PLANNING,
+        current_act: int = 0,
+        current_chapter_in_act: int = 0,
     ):
         super().__init__(id.value)
         self.novel_id = id  # 存储 NovelId 对象
@@ -35,6 +49,12 @@ class Novel(BaseEntity):
         self.premise = premise  # 故事梗概/创意
         self.stage = stage
         self.chapters: List[Chapter] = []
+
+        # 自动驾驶状态
+        self.autopilot_status = autopilot_status
+        self.current_stage = current_stage  # 当前阶段（状态机）
+        self.current_act = current_act  # 当前幕号（从 0 开始）
+        self.current_chapter_in_act = current_chapter_in_act  # 当前幕内章节号（从 0 开始）
 
     def add_chapter(self, chapter: Chapter) -> None:
         """添加章节（必须连续）"""

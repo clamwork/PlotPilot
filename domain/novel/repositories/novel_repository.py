@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
-from domain.novel.entities.novel import Novel
+from domain.novel.entities.novel import Novel, AutopilotStatus
 from domain.novel.value_objects.novel_id import NovelId
 
 
@@ -13,6 +13,11 @@ class NovelRepository(ABC):
         pass
 
     @abstractmethod
+    async def async_save(self, novel: Novel) -> None:
+        """异步保存小说（守护进程使用）"""
+        pass
+
+    @abstractmethod
     def get_by_id(self, novel_id: NovelId) -> Optional[Novel]:
         """根据 ID 获取小说"""
         pass
@@ -20,6 +25,11 @@ class NovelRepository(ABC):
     @abstractmethod
     def list_all(self) -> List[Novel]:
         """列出所有小说"""
+        pass
+
+    @abstractmethod
+    def find_by_autopilot_status(self, status: AutopilotStatus) -> List[Novel]:
+        """根据自动驾驶状态查询小说（守护进程使用）"""
         pass
 
     @abstractmethod
