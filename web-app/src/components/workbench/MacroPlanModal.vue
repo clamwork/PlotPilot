@@ -197,13 +197,51 @@ const doGenerate = async () => {
 const doConfirm = async () => {
   confirming.value = true
   try {
-    await planningApi.confirmMacro(props.novelId, { structure: structurePreview.value as Record<string, unknown>[] })
-    message.success('结构框架已写入结构树')
-    emit('confirmed')
-    handleClose()
+    const res = await planningApi.confirmMacro(props.novelId, { structure: structurePreview.value as Record<string, unknown>[] }) as any
+
+    // 解析后端返回的 summary 状态
+    const summary = res?.summary || {}
+    const status = summary.status || 'GREEN'
+
+    if (status === 'GREEN') {
+      // 绿色通路：纯空框架覆盖
+      message.success(summary.message || '结构框架已写入结构树')
+      emit('confirmed')
+      handleClose()
+    } else if (status === 'YELLOW') {
+      // 黄色通路：安全合并
+      message.warning(summary.message || '已安全合并，保留已有正文')
+      emit('confirmed')
+      handleClose()
+    } else {
+      // 未知状态，默认成功
+      message.success('结构框架已写入结构树')
+      emit('confirmed')
+      handleClose()
+    }
   } catch (e: unknown) {
-    const err = e as { response?: { data?: { detail?: string } } }
-    message.error(err?.response?.data?.detail || '写入失败')
+    const err = e as { response?: { status?: number; data?: { detail?: any } } }
+
+    // 检查是否是 409 Conflict（红色阻断）
+    if (err?.response?.status === 409) {
+      const detail = err.response.data?.detail
+      const conflicts = detail?.conflicts || []
+
+      // 构建冲突详情消息
+      let conflictMsg = '⚠️ 致命冲突！新结构删除了包含已有正文的节点：\n\n'
+      conflicts.forEach((c: any) => {
+        conflictMsg += `• ${c.title || c.node_id} (${c.node_type})\n`
+      })
+      conflictMsg += '\n请手动清理这些正文，或修改结构比例后再试。'
+
+      message.error(conflictMsg, { duration: 8000 })
+    } else {
+      // 其他错误
+      const errorMsg = typeof err?.response?.data?.detail === 'string'
+        ? err.response.data.detail
+        : '写入失败'
+      message.error(errorMsg)
+    }
   } finally {
     confirming.value = false
   }

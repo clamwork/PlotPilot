@@ -288,6 +288,90 @@ class StoryNodeRepository:
         finally:
             conn.close()
 
+    async def apply_merge_plan(self, creates: List[dict], updates: List[dict], deletes: List[str]) -> None:
+        """应用宏观规划合并计划（原子性事务）
+
+        Args:
+            creates: 需要创建的节点字典列表
+            updates: 需要更新的节点字典列表
+            deletes: 需要删除的节点 ID 列表
+        """
+        conn = self._get_connection()
+        try:
+            conn.execute("BEGIN")
+            cursor = conn.cursor()
+
+            # 1. 批量删除
+            if deletes:
+                placeholders = ",".join(["?"] * len(deletes))
+                cursor.execute(f"DELETE FROM story_nodes WHERE id IN ({placeholders})", deletes)
+
+            # 2. 批量更新（只更新 title, description, order_index）
+            if updates:
+                for u in updates:
+                    cursor.execute("""
+                        UPDATE story_nodes
+                        SET title=?, description=?, order_index=?, updated_at=?
+                        WHERE id=?
+                    """, (
+                        u['title'],
+                        u.get('description', ''),
+                        u['order_index'],
+                        datetime.now().isoformat(),
+                        u['id']
+                    ))
+
+            # 3. 批量插入
+            if creates:
+                for c in creates:
+                    cursor.execute("""
+                        INSERT INTO story_nodes (
+                            id, novel_id, parent_id, node_type, number, title, description, order_index,
+                            planning_status, planning_source,
+                            chapter_start, chapter_end, chapter_count, suggested_chapter_count,
+                            content, outline, word_count, status,
+                            themes, key_events, narrative_arc, conflicts,
+                            pov_character_id, timeline_start, timeline_end,
+                            metadata, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        c['id'],
+                        c['novel_id'],
+                        c.get('parent_id'),
+                        c['node_type'],
+                        c.get('number', 0),
+                        c['title'],
+                        c.get('description', ''),
+                        c['order_index'],
+                        c.get('planning_status', 'PENDING'),
+                        c.get('planning_source', 'AI'),
+                        c.get('chapter_start'),
+                        c.get('chapter_end'),
+                        c.get('chapter_count'),
+                        c.get('suggested_chapter_count'),
+                        c.get('content'),
+                        c.get('outline'),
+                        c.get('word_count', 0),
+                        c.get('status', 'draft'),
+                        json.dumps(c.get('themes', [])),
+                        json.dumps(c.get('key_events', [])),
+                        c.get('narrative_arc'),
+                        json.dumps(c.get('conflicts', [])),
+                        c.get('pov_character_id'),
+                        c.get('timeline_start'),
+                        c.get('timeline_end'),
+                        json.dumps(c.get('metadata', {})),
+                        datetime.now().isoformat(),
+                        datetime.now().isoformat(),
+                    ))
+
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+
     def _row_to_entity(self, row: sqlite3.Row) -> StoryNode:
         """将数据库行转换为实体"""
         # sqlite3.Row 不支持 .get() 方法，需要先转换为字典

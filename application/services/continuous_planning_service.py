@@ -19,8 +19,13 @@ from infrastructure.persistence.database.story_node_repository import StoryNodeR
 from infrastructure.persistence.database.chapter_element_repository import ChapterElementRepository
 from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
+from application.services.macro_merge_engine import MacroMergeEngine, MergePlan, MergeConflictException
 
 logger = logging.getLogger(__name__)
+
+
+# 导出 MergeConflictException 供路由层使用
+__all__ = ['ContinuousPlanningService', 'MergeConflictException']
 
 
 class ContinuousPlanningService:
@@ -86,7 +91,12 @@ class ContinuousPlanningService:
         }
 
     async def confirm_macro_plan(self, novel_id: str, structure: List[Dict]) -> Dict:
-        """确认宏观规划"""
+        """确认宏观规划（旧版本，不安全，保留用于向后兼容）
+
+        ⚠️ 警告：此方法不检查已有数据，可能导致僵尸节点或数据丢失
+        推荐使用 confirm_macro_plan_safe() 方法
+        """
+        logger.warning(f"Using unsafe confirm_macro_plan for novel {novel_id}")
         logger.info(f"Confirming macro plan for novel {novel_id}")
 
         created_nodes = []
@@ -128,6 +138,77 @@ class ContinuousPlanningService:
             "success": True,
             "created_nodes": len(created_nodes),
             "message": f"已创建 {len(created_nodes)} 个结构节点"
+        }
+
+    async def confirm_macro_plan_safe(self, novel_id: str, structure: List[Dict]) -> Dict:
+        """安全的宏观规划确认（带血缘继承的智能合并）
+
+        核心机制：
+        1. 自底向上标记承载者（有正文的节点）
+        2. 三路比对（create/update/delete）
+        3. 冲突检测（红色阻断）
+        4. 原子性事务执行
+
+        Args:
+            novel_id: 小说 ID
+            structure: 新的宏观结构（部-卷-幕）
+
+        Returns:
+            合并结果，包含 summary（GREEN/YELLOW/RED 状态）
+
+        Raises:
+            MergeConflictException: 当新结构试图删除包含正文的节点时
+        """
+        logger.info(f"[SafeMerge] Starting safe macro plan confirmation for novel {novel_id}")
+
+        # 阶段 1：深度扫描 - 获取旧结构
+        old_nodes_entities = await self.story_node_repo.get_by_novel(novel_id)
+        logger.info(f"[SafeMerge] Found {len(old_nodes_entities)} existing nodes")
+
+        # 标准化旧节点：Entity → Dict（Enum 序列化）
+        old_nodes = [
+            {
+                "id": node.id,
+                "novel_id": node.novel_id,
+                "parent_id": node.parent_id,
+                "node_type": node.node_type.value,  # NodeType.CHAPTER → 'CHAPTER'
+                "number": node.number,
+                "title": node.title,
+                "description": node.description,
+                "order_index": node.order_index,
+            }
+            for node in old_nodes_entities
+        ]
+
+        # 标准化新节点：扁平化嵌套结构 → 平面列表
+        new_nodes = self._flatten_structure_to_nodes(novel_id, structure)
+        logger.info(f"[SafeMerge] Generated {len(new_nodes)} new nodes")
+
+        # 阶段 2：匹配与继承 - 执行比对
+        engine = MacroMergeEngine(old_nodes, new_nodes)
+        plan = engine.execute_diff()
+        logger.info(f"[SafeMerge] Merge plan: creates={len(plan.creates)}, updates={len(plan.updates)}, deletes={len(plan.deletes)}, conflicts={len(plan.conflicts)}")
+
+        # 阶段 3：冲突检测 - 红色阻断
+        if plan.has_fatal_conflict:
+            logger.error(f"[SafeMerge] Fatal conflicts detected: {plan.conflicts}")
+            raise MergeConflictException(
+                message="重构导致部分已有正文的章节孤立",
+                conflicts=plan.conflicts
+            )
+
+        # 阶段 4：执行合并 - 原子性事务
+        logger.info(f"[SafeMerge] Applying merge plan...")
+        await self.story_node_repo.apply_merge_plan(
+            creates=plan.creates,
+            updates=plan.updates,
+            deletes=plan.deletes
+        )
+
+        logger.info(f"[SafeMerge] Merge completed successfully: {plan.summary}")
+        return {
+            "success": True,
+            "summary": plan.summary
         }
 
     # ==================== 幕级规划 ====================
@@ -371,6 +452,75 @@ class ContinuousPlanningService:
             narrative_arc=data.get("narrative_arc") if node_type == NodeType.ACT else None,
             conflicts=data.get("conflicts", []) if node_type == NodeType.ACT else [],
         )
+
+    def _flatten_structure_to_nodes(self, novel_id: str, structure: List[Dict]) -> List[Dict]:
+        """将嵌套的部-卷-幕结构扁平化为节点列表（用于 MacroMergeEngine）
+
+        Args:
+            novel_id: 小说 ID
+            structure: 嵌套结构 [{"title": "第一部", "volumes": [...]}]
+
+        Returns:
+            平面节点列表 [{"id": "part-xxx", "node_type": "PART", ...}]
+        """
+        nodes = []
+        order_index = 0
+        part_number = 0
+        volume_number = 0
+        act_number = 0
+
+        for part_data in structure:
+            part_number += 1
+            part_data["number"] = part_number
+            part_id = f"part-{novel_id}-{part_number}"
+
+            nodes.append({
+                "id": part_id,
+                "novel_id": novel_id,
+                "parent_id": None,
+                "node_type": "PART",
+                "number": part_number,
+                "title": part_data["title"],
+                "description": part_data.get("description", ""),
+                "order_index": order_index,
+            })
+            order_index += 1
+
+            for volume_data in part_data.get("volumes", []):
+                volume_number += 1
+                volume_data["number"] = volume_number
+                volume_id = f"volume-{novel_id}-{volume_number}"
+
+                nodes.append({
+                    "id": volume_id,
+                    "novel_id": novel_id,
+                    "parent_id": part_id,
+                    "node_type": "VOLUME",
+                    "number": volume_number,
+                    "title": volume_data["title"],
+                    "description": volume_data.get("description", ""),
+                    "order_index": order_index,
+                })
+                order_index += 1
+
+                for act_data in volume_data.get("acts", []):
+                    act_number += 1
+                    act_data["number"] = act_number
+                    act_id = f"act-{novel_id}-{act_number}"
+
+                    nodes.append({
+                        "id": act_id,
+                        "novel_id": novel_id,
+                        "parent_id": volume_id,
+                        "node_type": "ACT",
+                        "number": act_number,
+                        "title": act_data["title"],
+                        "description": act_data.get("description", ""),
+                        "order_index": order_index,
+                    })
+                    order_index += 1
+
+        return nodes
 
     def _normalize_act_chapter_row(self, raw: Dict, act_local_index: int) -> Dict:
         """LLM / 前端可能缺 number、title，或 number 为字符串；统一为可落库结构。"""

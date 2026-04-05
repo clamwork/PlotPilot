@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 
-from application.services.continuous_planning_service import ContinuousPlanningService
+from application.services.continuous_planning_service import ContinuousPlanningService, MergeConflictException
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
 from infrastructure.persistence.database.chapter_element_repository import ChapterElementRepository
 from infrastructure.persistence.database.sqlite_chapter_repository import SqliteChapterRepository
@@ -127,16 +127,31 @@ async def confirm_macro_plan(
     request: MacroPlanConfirmRequest,
     service: ContinuousPlanningService = Depends(get_service)
 ):
-    """确认宏观规划
+    """确认宏观规划（安全版本，带智能合并）
 
     用户编辑后，保存所有部-卷-幕节点（不创建章节）
+
+    安全机制：
+    - 绿色通路：纯空框架覆盖
+    - 黄色通路：安全合并（保留已写正文）
+    - 红色阻断：冲突检测（试图删除包含正文的节点）
     """
     try:
-        result = await service.confirm_macro_plan(
+        result = await service.confirm_macro_plan_safe(
             novel_id=novel_id,
             structure=request.structure
         )
         return result
+    except MergeConflictException as e:
+        # 红色阻断：返回 409 Conflict 状态码
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "MERGE_CONFLICT",
+                "message": str(e),
+                "conflicts": e.conflicts
+            }
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"确认宏观规划失败: {str(e)}")
 
