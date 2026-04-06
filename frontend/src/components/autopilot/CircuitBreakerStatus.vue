@@ -10,6 +10,9 @@
         {{ statusLabel }}
       </n-tag>
     </div>
+    <n-text depth="3" style="font-size: 11px; line-height: 1.4; display: block; margin: -4px 0 8px">
+      单本连续失败达到阈值会挂起；未启动托管时多为「正常」。与守护进程内全局熔断（跨进程）展示可能不完全一致。
+    </n-text>
 
     <div class="breaker-body">
       <!-- 状态指示器 -->

@@ -50,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 
 interface LogEvent {
   id: string
@@ -69,7 +69,10 @@ const logEvents = ref<LogEvent[]>([])
 const scrollContainer = ref<HTMLElement | null>(null)
 const isAutoScroll = ref(true)
 const hasNewLogs = ref(false)
-const connectionStatus = ref<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
+const connectionStatus = ref<'connected' | 'reconnecting' | 'disconnected' | 'ended'>('disconnected')
+/** 服务端已发送 autopilot_complete 并关闭流，属正常结束，禁止重连刷屏 */
+const streamEndedNormally = ref(false)
+const endedSummary = ref('')
 
 let eventSource: EventSource | null = null
 let reconnectTimer: number | null = null
@@ -83,6 +86,8 @@ const statusText = computed(() => {
       return '重新连接中...'
     case 'disconnected':
       return '已断开'
+    case 'ended':
+      return endedSummary.value || '流已结束'
     default:
       return '未知'
   }
@@ -90,6 +95,9 @@ const statusText = computed(() => {
 
 // 连接 SSE
 function connectSSE() {
+  if (streamEndedNormally.value) {
+    return
+  }
   if (eventSource) {
     eventSource.close()
   }
@@ -108,6 +116,20 @@ function connectSSE() {
     eventSource.onmessage = async (e) => {
       try {
         const data = JSON.parse(e.data)
+
+        if (data.type === 'heartbeat') {
+          return
+        }
+
+        if (data.type === 'autopilot_complete') {
+          endedSummary.value = data.message || '自动驾驶已结束'
+          streamEndedNormally.value = true
+          connectionStatus.value = 'ended'
+          if (reconnectTimer) {
+            clearTimeout(reconnectTimer)
+            reconnectTimer = null
+          }
+        }
 
         // 添加新日志（从底部添加）
         const newEvent: LogEvent = {
@@ -132,12 +154,20 @@ function connectSSE() {
         } else {
           hasNewLogs.value = true
         }
+
+        if (data.type === 'autopilot_complete' && eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
       } catch (err) {
         console.error('Failed to parse SSE message:', err)
       }
     }
 
     eventSource.onerror = () => {
+      if (streamEndedNormally.value) {
+        return
+      }
       connectionStatus.value = 'reconnecting'
 
       // 3秒后尝试重连
@@ -239,6 +269,25 @@ onMounted(() => {
   connectSSE()
 })
 
+watch(
+  () => props.novelId,
+  () => {
+    streamEndedNormally.value = false
+    endedSummary.value = ''
+    logEvents.value = []
+    connectionStatus.value = 'disconnected'
+    if (eventSource) {
+      eventSource.close()
+      eventSource = null
+    }
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    connectSSE()
+  }
+)
+
 onUnmounted(() => {
   if (eventSource) {
     eventSource.close()
@@ -293,6 +342,10 @@ onUnmounted(() => {
 
 .status-dot.disconnected {
   background: #d03050;
+}
+
+.status-dot.ended {
+  background: #2080f0;
 }
 
 @keyframes pulse-green {

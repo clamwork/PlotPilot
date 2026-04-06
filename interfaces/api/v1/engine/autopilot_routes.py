@@ -187,6 +187,7 @@ async def autopilot_log_stream(novel_id: str):
         last_stage = None
         last_beat = None
         heartbeat_counter = 0
+        last_error_broadcast = -1
 
         while True:
             try:
@@ -235,9 +236,10 @@ async def autopilot_log_stream(novel_id: str):
                     }
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-                # 检测错误
-                error_count = getattr(novel, "consecutive_error_count", 0)
-                if error_count > 0:
+                # 检测错误（仅在计数变化时推送，避免每 2 秒刷屏）
+                error_count = getattr(novel, "consecutive_error_count", 0) or 0
+                if error_count > 0 and error_count != last_error_broadcast:
+                    last_error_broadcast = error_count
                     event = {
                         "type": "beat_error",
                         "message": f"生成遇到错误（连续 {error_count} 次）",
@@ -247,6 +249,8 @@ async def autopilot_log_stream(novel_id: str):
                         }
                     }
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if error_count == 0:
+                    last_error_broadcast = -1
 
                 last_stage = current_stage
                 last_beat = current_beat
