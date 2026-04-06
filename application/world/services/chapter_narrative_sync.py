@@ -110,7 +110,8 @@ async def llm_chapter_extract_bundle(
   "foreshadow_hints": [ {"description": "伏笔或悬念描述"} ],
   "storyline_progress": [ {"type": "主线|支线|感情线", "description": "本章该线进展"} ],
   "tension_score": 50,
-  "dialogues": [ {"speaker": "角色名", "content": "对话内容", "context": "对话场景"} ]
+  "dialogues": [ {"speaker": "角色名", "content": "对话内容", "context": "对话场景"} ],
+  "timeline_events": [ {"time_point": "时间描述", "event": "事件摘要", "description": "详细说明"} ]
 }
 约束：
 - relation_triples：只写文中明确出现的关系，最多 8 条；无则 []。
@@ -118,6 +119,7 @@ async def llm_chapter_extract_bundle(
 - storyline_progress：本章推进的故事线，最多 5 条；无则 []。
 - tension_score：章节张力值 0-100（冲突/悬念/情绪强度），平淡=20-40，正常=40-60，高潮=60-80，巅峰=80-100。
 - dialogues：重要对话（推动剧情/展现性格），最多 10 条；无则 []。
+- timeline_events：本章发生的时间线事件（世界内历法/相对时间），最多 5 条；无则 []。
 - 不要编造 beat 列表；summary/key_events/open_threads 用中文；严格合法 JSON。"""
 
     user = f"第 {chapter_number} 章正文如下：\n\n{body}"
@@ -141,6 +143,9 @@ async def llm_chapter_extract_bundle(
     dialogues_raw = data.get("dialogues") or []
     if not isinstance(dialogues_raw, list):
         dialogues_raw = []
+    timeline_raw = data.get("timeline_events") or []
+    if not isinstance(timeline_raw, list):
+        timeline_raw = []
 
     tension_score = data.get("tension_score", 50)
     try:
@@ -158,6 +163,7 @@ async def llm_chapter_extract_bundle(
         "storyline_progress": storyline_raw[:5],
         "tension_score": tension_score,
         "dialogues": dialogues_raw[:10],
+        "timeline_events": timeline_raw[:5],
     }
 
 
@@ -205,7 +211,13 @@ def persist_bundle_triples_and_foreshadows(
         try:
             registry = foreshadowing_repo.get_by_novel_id(NovelId(novel_id))
             if not registry:
-                return
+                # 创建新的 ForeshadowingRegistry
+                from domain.novel.entities.foreshadowing_registry import ForeshadowingRegistry
+                registry = ForeshadowingRegistry(
+                    id=str(uuid.uuid4()),
+                    novel_id=NovelId(novel_id)
+                )
+                logger.info("创建新伏笔账本 novel=%s", novel_id)
             for h in hints:
                 if not isinstance(h, dict):
                     desc = str(h).strip()
@@ -700,6 +712,37 @@ def persist_bundle_extras(
             logger.info("对话提取完成 novel=%s ch=%s count=%d", novel_id, chapter_number, len(dialogues))
         except Exception as e:
             logger.warning("对话落库失败 novel=%s ch=%s: %s", novel_id, chapter_number, e)
+
+    # 8. 时间轴事件提取（写入 timeline_notes）
+    timeline_events = bundle.get("timeline_events") or []
+    if timeline_events:
+        try:
+            from infrastructure.persistence.database.connection import get_database
+            db = get_database()
+            conn = db.get_connection()
+            cursor = conn.cursor()
+
+            for evt in timeline_events:
+                if not isinstance(evt, dict):
+                    continue
+                time_point = str(evt.get("time_point", "")).strip()
+                event = str(evt.get("event", "")).strip()
+                description = str(evt.get("description", "")).strip()
+
+                if not event:
+                    continue
+
+                # 写入 timeline_notes 表
+                note_id = f"tl-{uuid.uuid4()}"
+                cursor.execute("""
+                    INSERT INTO timeline_notes (id, novel_id, time_point, event, description)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (note_id, novel_id, time_point or f"第{chapter_number}章", event, description))
+
+            conn.commit()
+            logger.info("时间轴事件提取完成 novel=%s ch=%s count=%d", novel_id, chapter_number, len(timeline_events))
+        except Exception as e:
+            logger.warning("时间轴落库失败 novel=%s ch=%s: %s", novel_id, chapter_number, e)
 
 
 async def sync_chapter_narrative_after_save(
