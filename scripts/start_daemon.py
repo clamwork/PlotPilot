@@ -29,6 +29,7 @@ from application.blueprint.services.continuous_planning_service import Continuou
 # 复用 API 层的工厂函数，保证与 FastAPI 层使用同一套配置
 from interfaces.api.dependencies import (
     get_llm_service,
+    build_auto_workflow,
     get_context_builder,
     get_bible_service,
     get_foreshadowing_repository,
@@ -58,6 +59,7 @@ def build_daemon() -> AutopilotDaemon:
     foreshadow_repo = SqliteForeshadowingRepository(db)
 
     llm_service = get_llm_service()
+    chapter_workflow = build_auto_workflow(llm_service)
     context_builder = get_context_builder()
 
     planning_service = ContinuousPlanningService(
@@ -108,6 +110,7 @@ def build_daemon() -> AutopilotDaemon:
         poll_interval=5,
         voice_drift_service=voice_drift_service,
         circuit_breaker=circuit_breaker,
+        chapter_workflow=chapter_workflow,
     )
 
 

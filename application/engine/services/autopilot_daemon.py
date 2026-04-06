@@ -20,6 +20,7 @@ from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
 from application.engine.services.context_builder import ContextBuilder
 from application.engine.services.background_task_service import BackgroundTaskService, TaskType
+from application.workflows.auto_novel_generation_workflow import AutoNovelGenerationWorkflow
 from domain.novel.value_objects.chapter_id import ChapterId
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class AutopilotDaemon:
         poll_interval: int = 5,
         voice_drift_service=None,
         circuit_breaker=None,
+        chapter_workflow: Optional[AutoNovelGenerationWorkflow] = None,
     ):
         self.novel_repository = novel_repository
         self.llm_service = llm_service
@@ -51,6 +53,7 @@ class AutopilotDaemon:
         self.poll_interval = poll_interval
         self.voice_drift_service = voice_drift_service
         self.circuit_breaker = circuit_breaker
+        self.chapter_workflow = chapter_workflow
 
     def run_forever(self):
         """守护进程主循环（事务最小化原则）"""
@@ -452,9 +455,23 @@ class AutopilotDaemon:
             logger.info(f"[{novel.novel_id}] 用户已停止，跳过本章（上下文组装前）")
             return
 
-        # 4. 组装上下文（不持有数据库锁，纯读操作）
+        # 4. 组装上下文（与「写一章 / 流式」同源：结构化上下文 + 故事线 + 张力 + 文风）
+        bundle = None
         context = ""
-        if self.context_builder:
+        if self.chapter_workflow:
+            try:
+                bundle = self.chapter_workflow.prepare_chapter_generation(
+                    novel.novel_id.value, chapter_num, outline, scene_director=None
+                )
+                context = bundle["context"]
+                logger.info(
+                    f"[{novel.novel_id}]    上下文（workflow）: {len(context)} 字符, "
+                    f"约 {bundle['context_tokens']} tokens"
+                )
+            except Exception as e:
+                logger.warning(f"prepare_chapter_generation 失败，降级 build_context：{e}")
+                bundle = None
+        if bundle is None and self.context_builder:
             try:
                 context = self.context_builder.build_context(
                     novel_id=novel.novel_id.value,
@@ -483,6 +500,8 @@ class AutopilotDaemon:
 
         chapter_content = await self._get_existing_chapter_content(novel, chapter_num) or ""
 
+        use_wf = self.chapter_workflow is not None and bundle is not None
+
         if beats:
             for i, beat in enumerate(beats):
                 if i < start_beat:
@@ -493,7 +512,23 @@ class AutopilotDaemon:
                     return
 
                 beat_prompt = self.context_builder.build_beat_prompt(beat, i, len(beats))
-                beat_content = await self._stream_one_beat(outline, context, beat_prompt, beat, novel=novel)
+                if use_wf:
+                    prompt = self.chapter_workflow.build_chapter_prompt(
+                        bundle["context"],
+                        outline,
+                        storyline_context=bundle["storyline_context"],
+                        plot_tension=bundle["plot_tension"],
+                        style_summary=bundle["style_summary"],
+                        beat_prompt=beat_prompt,
+                        beat_index=i,
+                        total_beats=len(beats),
+                        beat_target_words=int(beat.target_words),
+                    )
+                    max_tokens = int(beat.target_words * 1.5)
+                    cfg = GenerationConfig(max_tokens=max_tokens, temperature=0.85)
+                    beat_content = await self._stream_llm_with_stop_watch(prompt, cfg, novel=novel)
+                else:
+                    beat_content = await self._stream_one_beat(outline, context, beat_prompt, beat, novel=novel)
 
                 if beat_content.strip():
                     chapter_content += ("\n\n" if chapter_content else "") + beat_content
@@ -517,7 +552,18 @@ class AutopilotDaemon:
             if not self._is_still_running(novel):
                 logger.info(f"[{novel.novel_id}] 用户已停止，跳过单段生成")
                 return
-            beat_content = await self._stream_one_beat(outline, context, None, None, novel=novel)
+            if use_wf:
+                prompt = self.chapter_workflow.build_chapter_prompt(
+                    bundle["context"],
+                    outline,
+                    storyline_context=bundle["storyline_context"],
+                    plot_tension=bundle["plot_tension"],
+                    style_summary=bundle["style_summary"],
+                )
+                cfg = GenerationConfig(max_tokens=3000, temperature=0.85)
+                beat_content = await self._stream_llm_with_stop_watch(prompt, cfg, novel=novel)
+            else:
+                beat_content = await self._stream_one_beat(outline, context, None, None, novel=novel)
             if not self._is_still_running(novel):
                 logger.info(f"[{novel.novel_id}] 用户已停止，单段生成已中断")
                 novel.current_beat_index = 0
@@ -530,6 +576,15 @@ class AutopilotDaemon:
             logger.info(f"[{novel.novel_id}] 用户已停止，本章不标记完成")
             self._flush_novel(novel)
             return
+
+        if use_wf and chapter_content.strip():
+            try:
+                await self.chapter_workflow.post_process_generated_chapter(
+                    novel.novel_id.value, chapter_num, outline, chapter_content, scene_director=None
+                )
+                logger.info(f"[{novel.novel_id}]    ✅ post_process_generated_chapter 完成")
+            except Exception as e:
+                logger.warning(f"post_process_generated_chapter 失败（仍落库）：{e}")
 
         # 7. 章节完成，标记 completed
         await self._upsert_chapter_content(novel, next_chapter_node, chapter_content, status="completed")
@@ -636,29 +691,10 @@ class AutopilotDaemon:
         except Exception:
             return 5  # 解析失败，返回默认值
 
-    async def _stream_one_beat(self, outline, context, beat_prompt, beat, novel=None) -> str:
-        """流式生成单个节拍（或整章），返回生成内容。novel 传入时在流式过程中轮询 DB 是否已停止。"""
-        system = """你是一位资深网文作家，擅长写爽文。
-写作要求：
-1. 严格按节拍字数和聚焦点写作
-2. 必须有对话和人物互动，保持人物性格一致
-3. 增加感官细节：视觉、听觉、触觉、情绪
-4. 节奏控制：不要一章推进太多剧情
-5. 不要写章节标题"""
-
-        user_parts = []
-        if context:
-            user_parts.append(context)
-        user_parts.append(f"\n【本章大纲】\n{outline}")
-        if beat_prompt:
-            user_parts.append(f"\n{beat_prompt}")
-        user_parts.append("\n\n开始撰写：")
-
-        max_tokens = int(beat.target_words * 1.5) if beat else 3000
-
-        prompt = Prompt(system=system, user="\n".join(user_parts))
-        config = GenerationConfig(max_tokens=max_tokens, temperature=0.85)
-
+    async def _stream_llm_with_stop_watch(
+        self, prompt: Prompt, config: GenerationConfig, novel=None
+    ) -> str:
+        """与 workflow 共用同一套 Prompt + LLM；novel 传入时并行轮询 DB 是否已停止。"""
         content = ""
         stop_detected = asyncio.Event()
         watch_task = None
@@ -668,7 +704,6 @@ class AutopilotDaemon:
             novel_id_ref = novel.novel_id
 
             async def _watch_stop_from_db() -> None:
-                """与 stream_generate 并行：不依赖 chunk 频率，首 token 慢时也能尽快停。"""
                 while not stop_detected.is_set():
                     await asyncio.sleep(0.35)
                     if not self._novel_is_running_in_db(novel_id_ref):
@@ -698,6 +733,30 @@ class AutopilotDaemon:
             self._merge_autopilot_status_from_db(novel)
 
         return content
+
+    async def _stream_one_beat(self, outline, context, beat_prompt, beat, novel=None) -> str:
+        """无 AutoNovelGenerationWorkflow 时的降级：爽文短 Prompt + 流式。"""
+        system = """你是一位资深网文作家，擅长写爽文。
+写作要求：
+1. 严格按节拍字数和聚焦点写作
+2. 必须有对话和人物互动，保持人物性格一致
+3. 增加感官细节：视觉、听觉、触觉、情绪
+4. 节奏控制：不要一章推进太多剧情
+5. 不要写章节标题"""
+
+        user_parts = []
+        if context:
+            user_parts.append(context)
+        user_parts.append(f"\n【本章大纲】\n{outline}")
+        if beat_prompt:
+            user_parts.append(f"\n{beat_prompt}")
+        user_parts.append("\n\n开始撰写：")
+
+        max_tokens = int(beat.target_words * 1.5) if beat else 3000
+
+        prompt = Prompt(system=system, user="\n".join(user_parts))
+        config = GenerationConfig(max_tokens=max_tokens, temperature=0.85)
+        return await self._stream_llm_with_stop_watch(prompt, config, novel=novel)
 
     async def _upsert_chapter_content(self, novel, chapter_node, content: str, status: str):
         """最小事务：只更新章节内容，不涉及其他表"""
