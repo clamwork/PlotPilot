@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS novels (
     last_chapter_tension INTEGER DEFAULT 0,
     consecutive_error_count INTEGER DEFAULT 0,
     current_beat_index INTEGER DEFAULT 0,
+    last_audit_chapter_number INTEGER,
+    last_audit_similarity REAL,
+    last_audit_drift_alert INTEGER DEFAULT 0,
+    last_audit_narrative_ok INTEGER DEFAULT 1,
+    last_audit_at TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

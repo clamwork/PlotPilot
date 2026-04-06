@@ -121,6 +121,33 @@ def _apply_autopilot_v2_migrations(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _apply_last_chapter_audit_columns(conn: sqlite3.Connection) -> None:
+    """章末审阅快照（全托管 AUDITING 后写入，供状态 API 与前台章节状态展示）。"""
+    cur = conn.execute("PRAGMA table_info(novels)")
+    cols = {row[1] for row in cur.fetchall()}
+    migrations = {
+        "last_audit_chapter_number": (
+            "ALTER TABLE novels ADD COLUMN last_audit_chapter_number INTEGER"
+        ),
+        "last_audit_similarity": "ALTER TABLE novels ADD COLUMN last_audit_similarity REAL",
+        "last_audit_drift_alert": (
+            "ALTER TABLE novels ADD COLUMN last_audit_drift_alert INTEGER DEFAULT 0"
+        ),
+        "last_audit_narrative_ok": (
+            "ALTER TABLE novels ADD COLUMN last_audit_narrative_ok INTEGER DEFAULT 1"
+        ),
+        "last_audit_at": "ALTER TABLE novels ADD COLUMN last_audit_at TEXT",
+    }
+    for col, sql in migrations.items():
+        if col not in cols:
+            try:
+                conn.execute(sql)
+                logger.info("novels migration: added column %s", col)
+            except sqlite3.OperationalError as e:
+                logger.warning("novels migration skip %s: %s", col, e)
+    conn.commit()
+
+
 def _apply_character_enhancements(conn: sqlite3.Connection) -> None:
     """为 bible_characters 表补齐角色增强字段（Task 13/14）"""
     cur = conn.execute("PRAGMA table_info(bible_characters)")
@@ -222,6 +249,7 @@ class DatabaseConnection:
 
         _migrate_triples_columns(conn)
         _apply_autopilot_v2_migrations(conn)
+        _apply_last_chapter_audit_columns(conn)
         _apply_character_enhancements(conn)
         _ensure_triple_provenance_table(conn)
         conn.close()

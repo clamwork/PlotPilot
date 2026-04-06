@@ -24,9 +24,11 @@ class SqliteNovelRepository(NovelRepository):
                 autopilot_status, current_stage, current_act, current_chapter_in_act,
                 max_auto_chapters, current_auto_chapters, last_chapter_tension,
                 consecutive_error_count, current_beat_index,
+                last_audit_chapter_number, last_audit_similarity, last_audit_drift_alert,
+                last_audit_narrative_ok, last_audit_at,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 slug = excluded.slug,
@@ -42,6 +44,11 @@ class SqliteNovelRepository(NovelRepository):
                 last_chapter_tension = excluded.last_chapter_tension,
                 consecutive_error_count = excluded.consecutive_error_count,
                 current_beat_index = excluded.current_beat_index,
+                last_audit_chapter_number = excluded.last_audit_chapter_number,
+                last_audit_similarity = excluded.last_audit_similarity,
+                last_audit_drift_alert = excluded.last_audit_drift_alert,
+                last_audit_narrative_ok = excluded.last_audit_narrative_ok,
+                last_audit_at = excluded.last_audit_at,
                 updated_at = excluded.updated_at
         """
         now = datetime.utcnow().isoformat()
@@ -60,6 +67,11 @@ class SqliteNovelRepository(NovelRepository):
         last_chapter_tension = getattr(novel, 'last_chapter_tension', 0)
         consecutive_error_count = getattr(novel, 'consecutive_error_count', 0)
         current_beat_index = getattr(novel, 'current_beat_index', 0)
+        lacn = getattr(novel, "last_audit_chapter_number", None)
+        lasim = getattr(novel, "last_audit_similarity", None)
+        ladr = 1 if getattr(novel, "last_audit_drift_alert", False) else 0
+        lano = 1 if getattr(novel, "last_audit_narrative_ok", True) else 0
+        laat = getattr(novel, "last_audit_at", None)
 
         self.db.execute(sql, (
             novel_id,
@@ -77,6 +89,11 @@ class SqliteNovelRepository(NovelRepository):
             last_chapter_tension,
             consecutive_error_count,
             current_beat_index,
+            lacn,
+            lasim,
+            ladr,
+            lano,
+            laat,
             now,
             now
         ))
@@ -133,6 +150,8 @@ class SqliteNovelRepository(NovelRepository):
         except ValueError:
             current_stage = NovelStage.PLANNING
 
+        _lad = row.get("last_audit_drift_alert")
+        _lano = row.get("last_audit_narrative_ok")
         return Novel(
             id=novel_id,
             title=row['title'],
@@ -148,6 +167,11 @@ class SqliteNovelRepository(NovelRepository):
             last_chapter_tension=row.get('last_chapter_tension', 0),
             consecutive_error_count=row.get('consecutive_error_count', 0),
             current_beat_index=row.get('current_beat_index', 0),
+            last_audit_chapter_number=row.get("last_audit_chapter_number"),
+            last_audit_similarity=row.get("last_audit_similarity"),
+            last_audit_drift_alert=bool(_lad) if _lad is not None else False,
+            last_audit_narrative_ok=bool(_lano) if _lano is not None else True,
+            last_audit_at=row.get("last_audit_at"),
         )
 
     def delete(self, novel_id: NovelId) -> None:

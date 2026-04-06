@@ -1,6 +1,6 @@
 # domain/novel/entities/novel.py
 from enum import Enum
-from typing import List
+from typing import List, Optional
 from domain.shared.base_entity import BaseEntity
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.entities.chapter import Chapter, ChapterStatus
@@ -46,6 +46,11 @@ class Novel(BaseEntity):
         last_chapter_tension: int = 0,
         consecutive_error_count: int = 0,
         current_beat_index: int = 0,
+        last_audit_chapter_number: Optional[int] = None,
+        last_audit_similarity: Optional[float] = None,
+        last_audit_drift_alert: bool = False,
+        last_audit_narrative_ok: bool = True,
+        last_audit_at: Optional[str] = None,
     ):
         super().__init__(id.value)
         self.novel_id = id  # 存储 NovelId 对象
@@ -68,6 +73,13 @@ class Novel(BaseEntity):
         self.last_chapter_tension = last_chapter_tension  # 上章张力值（1-10）
         self.consecutive_error_count = consecutive_error_count  # 连续失败计数
         self.current_beat_index = current_beat_index  # 当前节拍索引（断点续写）
+
+        # 全托管章末审阅快照（供 API / 前台「章节状态」展示）
+        self.last_audit_chapter_number = last_audit_chapter_number
+        self.last_audit_similarity = last_audit_similarity
+        self.last_audit_drift_alert = last_audit_drift_alert
+        self.last_audit_narrative_ok = last_audit_narrative_ok
+        self.last_audit_at = last_audit_at
 
     def add_chapter(self, chapter: Chapter) -> None:
         """添加章节（必须连续）"""
