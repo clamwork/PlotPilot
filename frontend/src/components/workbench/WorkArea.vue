@@ -27,7 +27,8 @@
           :show-icon="true"
           class="assisted-readonly-banner"
         >
-          全托管进行中：可阅读正文与关联信息，不可保存、改稿或触发生成。请切换到「托管撰稿」查看驾驶舱与监控，或停止托管后再编辑。
+          <strong>全托管运行中</strong>：本侧仅只读；不能保存、改稿、快速生成或改章节元素。
+          请切换到「<strong>托管撰稿</strong>」看驾驶舱与监控，或停止托管后再编辑。
         </n-alert>
         <n-tabs v-model:value="activeTab" type="line" animated class="work-tabs assisted-tabs">
           <n-tab-pane name="editor" tab="📝 章节编辑">
@@ -128,6 +129,12 @@
 
       <!-- 托管撰稿：驾驶舱 + 监控大盘（点击左侧章节会切回辅助撰稿） -->
       <div v-else class="managed-stack">
+        <n-alert type="default" :show-icon="true" class="managed-daemon-hint">
+          <strong>托管依赖守护进程</strong>：需在本机运行
+          <code class="inline-code">python scripts/start_daemon.py</code>
+          轮询数据库；若只启动 API、未跑守护进程，阶段与章节<strong>不会推进</strong>。
+          日志里「阶段」若反复横跳，多为未跑守护进程或 DB 被多处写入。
+        </n-alert>
         <div class="autopilot-container managed-autopilot">
           <AutopilotPanel :novel-id="slug" @status-change="handleAutopilotStatusChange" />
         </div>
@@ -952,6 +959,20 @@ defineExpose({ ensureAssistedMode })
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.managed-daemon-hint {
+  flex-shrink: 0;
+  margin: 0 16px 10px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.managed-daemon-hint .inline-code {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(128, 128, 128, 0.12);
 }
 
 .managed-autopilot {

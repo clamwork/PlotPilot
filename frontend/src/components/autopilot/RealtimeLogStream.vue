@@ -341,6 +341,7 @@ function formatMetadata(metadata: Record<string, any> | undefined, eventType: st
     eventType === 'stage_change' ||
     eventType === 'beat_start' ||
     eventType === 'beat_complete' ||
+    eventType === 'beat_error' ||
     eventType === 'connected' ||
     eventType === 'autopilot_complete'
   ) {
