@@ -95,40 +95,60 @@ async def llm_chapter_extract_bundle(
     llm: LLMService,
     chapter_content: str,
     chapter_number: int,
+    pending_foreshadows: Optional[List[str]] = None,
 ) -> dict:
-    """一次 LLM 调用：叙事摘要 + 关键事件/埋线 + 人物关系三元组 + 伏笔线索 + 故事线进展 + 张力值 + 对话提取（避免多次调用）。"""
+    """一次 LLM 调用：叙事摘要 + 关键事件/埋线 + 人物关系三元组 + 伏笔线索 + 伏笔消费检测 + 故事线进展 + 张力值 + 对话提取（避免多次调用）。
+    
+    Args:
+        llm: LLM 服务
+        chapter_content: 章节正文
+        chapter_number: 章节号
+        pending_foreshadows: 待回收伏笔描述列表（用于消费检测）
+    """
     body = chapter_content.strip()
     if len(body) > 24000:
         body = body[:24000] + "\n\n…（正文过长已截断）"
 
-    system = """你是网文叙事编辑与信息抽取。根据章节正文输出**一个** JSON 对象（不要其它说明文字）：
-{
+    # 构建待回收伏笔提示
+    foreshadow_context = ""
+    if pending_foreshadows:
+        foreshadow_list = "\n".join(f"  - {f}" for f in pending_foreshadows[:15])
+        foreshadow_context = f"""
+【待回收伏笔清单】
+{foreshadow_list}
+
+请判断本章是否呼应/回收了上述伏笔。如果章节内容明确揭示或回应了某个伏笔的悬念，则在 consumed_foreshadows 中列出该伏笔的原描述（需与清单中的描述高度匹配）。"""
+
+    system = f"""你是网文叙事编辑与信息抽取。根据章节正文输出**一个** JSON 对象（不要其它说明文字）：
+{{
   "summary": "string，200～500 字，章末叙事总结，便于检索与衔接",
   "key_events": "string",
   "open_threads": "string",
-  "relation_triples": [ {"subject": "主体", "predicate": "关系", "object": "客体"} ],
-  "foreshadow_hints": [ {
+  "relation_triples": [ {{"subject": "主体", "predicate": "关系", "object": "客体"}} ],
+  "foreshadow_hints": [ {{
     "description": "伏笔或悬念描述",
     "suggested_resolve_offset": 5,
     "importance": "medium",
     "resolve_hint": "预期回收场景提示"
-  } ],
-  "storyline_progress": [ {"type": "主线|支线|感情线", "description": "本章该线进展"} ],
+  }} ],
+  "consumed_foreshadows": [ "被回收的伏笔描述1", "被回收的伏笔描述2" ],
+  "storyline_progress": [ {{"type": "主线|支线|感情线", "description": "本章该线进展"}} ],
   "tension_score": 50,
-  "dialogues": [ {"speaker": "角色名", "content": "对话内容", "context": "对话场景"} ],
-  "timeline_events": [ {"time_point": "时间描述", "event": "事件摘要", "description": "详细说明"} ]
-}
+  "dialogues": [ {{"speaker": "角色名", "content": "对话内容", "context": "对话场景"}} ],
+  "timeline_events": [ {{"time_point": "时间描述", "event": "事件摘要", "description": "详细说明"}} ]
+}}
 约束：
 - relation_triples：只写文中明确出现的关系，最多 8 条；无则 []。
 - foreshadow_hints：潜在伏笔/未解悬念，最多 4 条；无则 []。
   - suggested_resolve_offset：建议在多少章后回收（整数，通常 3-15 章），快节奏短篇用 2-5，长篇用 5-15
   - importance：伏笔重要性，可选 "low"（次要）、"medium"（一般）、"high"（重要）、"critical"（关键）
   - resolve_hint：简短描述预期回收的场景或剧情点（可选，如"下一幕高潮"）
+- consumed_foreshadows：本章回收/呼应的伏笔，从待回收清单中匹配，输出原描述；最多 5 条；无则 []。
 - storyline_progress：本章推进的故事线，最多 5 条；无则 []。
 - tension_score：章节张力值 0-100（冲突/悬念/情绪强度），平淡=20-40，正常=40-60，高潮=60-80，巅峰=80-100。
 - dialogues：重要对话（推动剧情/展现性格），最多 10 条；无则 []。
 - timeline_events：本章发生的时间线事件（世界内历法/相对时间），最多 5 条；无则 []。
-- 不要编造 beat 列表；summary/key_events/open_threads 用中文；严格合法 JSON。"""
+- 不要编造 beat 列表；summary/key_events/open_threads 用中文；严格合法 JSON。{foreshadow_context}"""
 
     user = f"第 {chapter_number} 章正文如下：\n\n{body}"
 
@@ -145,6 +165,9 @@ async def llm_chapter_extract_bundle(
     hints_raw = data.get("foreshadow_hints") or data.get("foreshadows") or []
     if not isinstance(hints_raw, list):
         hints_raw = []
+    consumed_raw = data.get("consumed_foreshadows") or data.get("consumed") or []
+    if not isinstance(consumed_raw, list):
+        consumed_raw = []
     storyline_raw = data.get("storyline_progress") or []
     if not isinstance(storyline_raw, list):
         storyline_raw = []
@@ -168,11 +191,52 @@ async def llm_chapter_extract_bundle(
         "open_threads": str(data.get("open_threads", "")).strip(),
         "relation_triples": triples_raw[:8],
         "foreshadow_hints": hints_raw[:4],
+        "consumed_foreshadows": [str(c).strip() for c in consumed_raw[:5] if str(c).strip()],
         "storyline_progress": storyline_raw[:5],
         "tension_score": tension_score,
         "dialogues": dialogues_raw[:10],
         "timeline_events": timeline_raw[:5],
     }
+
+
+def _fuzzy_match_foreshadow(consumed_desc: str, pending_list: List[Any]) -> Optional[Any]:
+    """模糊匹配消费的伏笔描述与待回收列表。
+    
+    Args:
+        consumed_desc: LLM 返回的消费伏笔描述
+        pending_list: 待回收伏笔列表（Foreshadowing 或 SubtextLedgerEntry）
+    
+    Returns:
+        匹配到的伏笔对象，未匹配返回 None
+    """
+    if not consumed_desc or not pending_list:
+        return None
+    
+    consumed_lower = consumed_desc.lower().strip()
+    
+    # 优先精确匹配
+    for f in pending_list:
+        desc = getattr(f, 'description', None) or getattr(f, 'hidden_clue', None)
+        if desc and desc.lower().strip() == consumed_lower:
+            return f
+    
+    # 其次模糊匹配（包含关系）
+    for f in pending_list:
+        desc = getattr(f, 'description', None) or getattr(f, 'hidden_clue', None)
+        if desc:
+            desc_lower = desc.lower().strip()
+            # 检查是否有足够的重叠
+            if consumed_lower in desc_lower or desc_lower in consumed_lower:
+                return f
+            # 检查关键词重叠（至少 50% 的词匹配）
+            consumed_words = set(consumed_lower)
+            desc_words = set(desc_lower)
+            if consumed_words and desc_words:
+                overlap = len(consumed_words & desc_words) / min(len(consumed_words), len(desc_words))
+                if overlap >= 0.5:
+                    return f
+    
+    return None
 
 
 def persist_bundle_triples_and_foreshadows(
@@ -182,9 +246,16 @@ def persist_bundle_triples_and_foreshadows(
     triple_repository: Any,
     foreshadowing_repo: Any,
 ) -> None:
-    """将 bundle 中的三元组与伏笔写入表（与旧 BG 两任务等价，但只解析一次 JSON）。"""
+    """将 bundle 中的三元组与伏笔写入表，并处理伏笔消费状态更新。
+    
+    功能：
+    1. 三元组落库
+    2. 新伏笔注册（PLANTED 状态）
+    3. 已消费伏笔状态更新（PLANTED -> RESOLVED / pending -> consumed）
+    """
     triples = bundle.get("relation_triples") or []
     hints = bundle.get("foreshadow_hints") or []
+    consumed = bundle.get("consumed_foreshadows") or []
 
     if triple_repository and triples:
         kr = getattr(triple_repository, "_kr", None)
@@ -270,6 +341,64 @@ def persist_bundle_triples_and_foreshadows(
                     )
                 except Exception as e:
                     logger.debug("伏笔入库跳过: %s", e)
+            
+            # 处理伏笔消费：将 LLM 识别的已消费伏笔标记为 RESOLVED/consumed
+            if consumed:
+                # 获取所有待回收伏笔
+                pending_foreshadows = registry.get_unresolved()
+                pending_subtext = registry.get_pending_subtext_entries()
+                
+                consumed_count = 0
+                for consumed_desc in consumed:
+                    if not consumed_desc:
+                        continue
+                    
+                    # 1. 尝试匹配 Foreshadowing 对象
+                    matched_foreshadow = _fuzzy_match_foreshadow(consumed_desc, pending_foreshadows)
+                    if matched_foreshadow:
+                        try:
+                            registry.mark_resolved(
+                                foreshadowing_id=matched_foreshadow.id,
+                                resolved_in_chapter=chapter_number
+                            )
+                            consumed_count += 1
+                            logger.info(
+                                "伏笔已消费 novel=%s ch=%s: %s -> RESOLVED",
+                                novel_id, chapter_number, consumed_desc[:50]
+                            )
+                            # 从待回收列表中移除已处理的
+                            pending_foreshadows = [f for f in pending_foreshadows if f.id != matched_foreshadow.id]
+                        except Exception as e:
+                            logger.warning("伏笔消费状态更新失败: %s", e)
+                        continue
+                    
+                    # 2. 尝试匹配 SubtextLedgerEntry 对象
+                    matched_entry = _fuzzy_match_foreshadow(consumed_desc, pending_subtext)
+                    if matched_entry:
+                        try:
+                            from dataclasses import replace
+                            updated_entry = replace(
+                                matched_entry,
+                                status="consumed",
+                                consumed_at_chapter=chapter_number
+                            )
+                            registry.update_subtext_entry(matched_entry.id, updated_entry)
+                            consumed_count += 1
+                            logger.info(
+                                "潜台词条目已消费 novel=%s ch=%s: %s -> consumed",
+                                novel_id, chapter_number, consumed_desc[:50]
+                            )
+                            # 从待回收列表中移除已处理的
+                            pending_subtext = [e for e in pending_subtext if e.id != matched_entry.id]
+                        except Exception as e:
+                            logger.warning("潜台词条目消费状态更新失败: %s", e)
+                
+                if consumed_count > 0:
+                    logger.info(
+                        "伏笔消费检测完成 novel=%s ch=%s consumed=%d/%d",
+                        novel_id, chapter_number, consumed_count, len(consumed)
+                    )
+            
             foreshadowing_repo.save(registry)
         except Exception as e:
             logger.warning("伏笔落库失败 novel=%s ch=%s: %s", novel_id, chapter_number, e)
@@ -821,8 +950,33 @@ async def sync_chapter_narrative_after_save(
     except Exception:
         pass
 
+    # 获取待回收伏笔列表（用于 LLM 消费检测）
+    pending_foreshadow_descs: List[str] = []
+    if foreshadowing_repo:
+        try:
+            registry = foreshadowing_repo.get_by_novel_id(NovelId(novel_id))
+            if registry:
+                # 从 Foreshadowing 对象获取描述
+                for f in registry.get_unresolved():
+                    if f.description:
+                        pending_foreshadow_descs.append(f.description)
+                # 从 SubtextLedgerEntry 获取描述
+                for e in registry.get_pending_subtext_entries():
+                    if e.hidden_clue:
+                        pending_foreshadow_descs.append(e.hidden_clue)
+                if pending_foreshadow_descs:
+                    logger.debug(
+                        "伏笔消费检测：获取到 %d 个待回收伏笔 novel=%s ch=%s",
+                        len(pending_foreshadow_descs), novel_id, chapter_number
+                    )
+        except Exception as e:
+            logger.warning("获取待回收伏笔失败: %s", e)
+
     try:
-        bundle = await llm_chapter_extract_bundle(llm_service, content, chapter_number)
+        bundle = await llm_chapter_extract_bundle(
+            llm_service, content, chapter_number,
+            pending_foreshadows=pending_foreshadow_descs if pending_foreshadow_descs else None
+        )
         summary = bundle.get("summary") or ""
         key_events = bundle.get("key_events") or ""
         open_threads = bundle.get("open_threads") or ""
@@ -840,7 +994,53 @@ async def sync_chapter_narrative_after_save(
             open_threads = existing.open_threads or ""
 
     beat_sections = _resolve_beat_sections(novel_id, chapter_number, existing_beats)
-
+    
+    # 生成微观节拍
+    micro_beats = []
+    try:
+        from application.engine.services.context_builder import ContextBuilder
+        # 这里需要获取 ContextBuilder 实例来生成节拍
+        # 我们可以复用章节大纲来生成节拍
+        if bundle.get("micro_beats"):
+            # 如果生成时已经创建，直接使用
+            micro_beats = bundle.get("micro_beats")
+        else:
+            # 否则从大纲动态生成
+            try:
+                # 临时创建 ContextBuilder（最好通过依赖注入）
+                from application.world.services.bible_service import BibleService
+                from domain.bible.services.relationship_engine import RelationshipEngine
+                from domain.novel.services.storyline_manager import StorylineManager
+                from domain.novel.repositories.novel_repository import NovelRepository
+                from domain.novel.repositories.chapter_repository import ChapterRepository
+                from domain.novel.repositories.plot_arc_repository import PlotArcRepository
+                from domain.ai.services.vector_store import VectorStore
+                
+                # 尝试从应用上下文中获取
+                context_builder = None
+                try:
+                    from application.paths import get_current_app
+                    app = get_current_app()
+                    context_builder = getattr(app, 'context_builder', None)
+                except:
+                    pass
+                
+                if context_builder and hasattr(context_builder, 'magnify_outline_to_beats'):
+                    beats = context_builder.magnify_outline_to_beats(
+                        str(chapter_plan.value.get('outline', '') if chapter_plan.value else '')
+                    )
+                    micro_beats = [
+                        {
+                            "description": beat.description,
+                            "target_words": beat.target_words,
+                            "focus": beat.focus
+                        } for beat in beats
+                    ]
+            except Exception as e:
+                logger.debug("生成微观节拍失败: %s", e)
+    except Exception as e:
+        logger.debug("微观节拍处理失败: %s", e)
+    
     knowledge_service.upsert_chapter_summary(
         novel_id=novel_id,
         chapter_id=chapter_number,
@@ -849,6 +1049,7 @@ async def sync_chapter_narrative_after_save(
         open_threads=open_threads or "无",
         consistency_note=consistency_note,
         beat_sections=beat_sections,
+        micro_beats=micro_beats if micro_beats else None,
         sync_status="synced" if summary else "draft",
     )
 
