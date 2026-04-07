@@ -22,7 +22,7 @@ class SqliteNovelRepository(NovelRepository):
         sql = """
             INSERT INTO novels (
                 id, title, slug, author, target_chapters, premise,
-                autopilot_status, current_stage, current_act, current_chapter_in_act,
+                autopilot_status, auto_approve_mode, current_stage, current_act, current_chapter_in_act,
                 max_auto_chapters, current_auto_chapters, last_chapter_tension,
                 consecutive_error_count, current_beat_index,
                 last_audit_chapter_number, last_audit_similarity, last_audit_drift_alert,
@@ -32,7 +32,7 @@ class SqliteNovelRepository(NovelRepository):
                 target_words_per_chapter,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 slug = excluded.slug,
@@ -40,6 +40,7 @@ class SqliteNovelRepository(NovelRepository):
                 target_chapters = excluded.target_chapters,
                 premise = excluded.premise,
                 autopilot_status = excluded.autopilot_status,
+                auto_approve_mode = excluded.auto_approve_mode,
                 current_stage = excluded.current_stage,
                 current_act = excluded.current_act,
                 current_chapter_in_act = excluded.current_chapter_in_act,
@@ -68,6 +69,7 @@ class SqliteNovelRepository(NovelRepository):
         author = getattr(novel, 'author', '未知作者')
         _ap = getattr(novel, 'autopilot_status', 'stopped')
         autopilot_status = _ap.value if isinstance(_ap, AutopilotStatus) else _ap
+        auto_approve_mode = 1 if getattr(novel, 'auto_approve_mode', False) else 0
         _cs = getattr(novel, 'current_stage', 'planning')
         current_stage = _cs.value if isinstance(_cs, NovelStage) else _cs
         current_act = getattr(novel, 'current_act', 0)
@@ -100,6 +102,7 @@ class SqliteNovelRepository(NovelRepository):
             novel.target_chapters,
             premise,
             autopilot_status,
+            auto_approve_mode,
             current_stage,
             current_act,
             current_chapter_in_act,
@@ -190,6 +193,7 @@ class SqliteNovelRepository(NovelRepository):
             target_chapters=row.get('target_chapters', 0),
             premise=row.get('premise', ''),
             autopilot_status=autopilot_status,
+            auto_approve_mode=bool(row.get('auto_approve_mode', 0)),
             current_stage=current_stage,
             current_act=row.get('current_act', 0),
             current_chapter_in_act=row.get('current_chapter_in_act', 0),
