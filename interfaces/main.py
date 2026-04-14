@@ -4,6 +4,15 @@
 """
 # 必须在任何 HuggingFace/Transformers 导入前设置离线模式
 import os
+import sys
+import io
+
+# 设置标准输出和错误输出的编码为 UTF-8（解决 Windows GBK 编码问题）
+if sys.platform == 'win32':
+    # Windows 系统下强制使用 UTF-8 编码
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 os.environ['HF_DATASETS_OFFLINE'] = '1'
