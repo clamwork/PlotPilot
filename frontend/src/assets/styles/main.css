@@ -85,6 +85,9 @@ body {
   --app-text-secondary: #1f2937;
   --app-text-muted: #475569;
   --app-text-inverse: #ffffff;
+  --text-color-1: var(--app-text-primary);
+  --text-color-2: var(--app-text-secondary);
+  --text-color-3: var(--app-text-muted);
 
   /* 与 Naive UI n-text depth、旧组件对齐：统一走 app 文字色，避免暗色下仍落回 #0f172a */
   --text-color-1: var(--app-text-primary);
