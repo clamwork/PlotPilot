@@ -457,6 +457,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import { useMessage } from 'naive-ui'
+import { resolveHttpUrl } from '../../api/config'
 import {
   consumeGenerateChapterStream,
   analyzeScene,
@@ -621,7 +622,7 @@ function handleVisibilityChange() {
 async function pollAutopilotStatusWhileAssisted() {
   if (assistedAutopilot404) return
   try {
-    const res = await fetch(`/api/v1/autopilot/${props.slug}/status`)
+    const res = await fetch(resolveHttpUrl(`/api/v1/autopilot/${props.slug}/status`))
     if (res.status === 404) {
       assistedAutopilot404 = true
       clearAssistedAutopilotPoll()
