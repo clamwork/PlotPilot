@@ -70,7 +70,7 @@
           :key="service.id"
           class="service-card"
           :class="{
-            'service-card--down': service.visualState === 'stopped' || service.visualState === 'failed',
+            'service-card--down': ['stopped', 'start_timeout', 'stop_timeout', 'failed'].includes(service.visualState),
             'service-card--transition': service.isTransitioning,
           }"
         >
@@ -349,14 +349,14 @@ interface ActionLogItem {
 
 type LogLevelFilter = 'all' | 'error' | 'warning'
 type ParsedLogLevel = 'error' | 'warning' | 'info' | 'plain'
-type ServiceVisualState = 'running' | 'stopped' | 'starting' | 'stopping' | 'restarting' | 'failed' | 'recovering'
+type ServiceVisualState = 'running' | 'stopped' | 'starting' | 'stopping' | 'restarting' | 'start_timeout' | 'stop_timeout' | 'failed' | 'recovering'
 type ServiceTransitionPhase = 'idle' | 'starting' | 'stopping' | 'restarting'
 type ServiceBadgeType = 'default' | 'primary' | 'info' | 'success' | 'warning' | 'error'
 
 interface ServiceTransitionSnapshot {
   phase: ServiceTransitionPhase
   lastAction: ServiceAction | null
-  lastOutcome: 'success' | 'error' | null
+  lastOutcome: 'success' | 'error' | 'timeout' | null
   message: string
   changedAt: number | null
 }
@@ -384,6 +384,7 @@ interface ServiceCardViewModel extends ManagedServiceStatus {
 
 const AUTO_REFRESH_INTERVAL = 8000
 const SERVICE_STATE_STICKY_MS = 10000
+const SERVICE_ACTION_TIMEOUT_MS = 15000
 
 const message = useMessage()
 const loading = ref(false)
@@ -413,7 +414,7 @@ const serviceCards = computed<ServiceCardViewModel[]>(() => {
 
 const runningCount = computed(() => serviceCards.value.filter(item => item.running).length)
 const hasServiceIssue = computed(() =>
-  serviceCards.value.some(item => ['stopped', 'failed'].includes(item.visualState)),
+  serviceCards.value.some(item => ['stopped', 'start_timeout', 'stop_timeout', 'failed'].includes(item.visualState)),
 )
 
 const webPortalUrl = computed(() => {
@@ -518,6 +519,41 @@ function isRecentTransition(snapshot: ServiceTransitionSnapshot) {
   return !!snapshot.changedAt && Date.now() - snapshot.changedAt < SERVICE_STATE_STICKY_MS
 }
 
+function didActionReachDesiredState(action: ServiceAction, running: boolean) {
+  if (action === 'stop') return !running
+  return running
+}
+
+function getActionLabel(action: ServiceAction) {
+  return action === 'start' ? '\u542f\u52a8' : action === 'stop' ? '\u505c\u6b62' : '\u91cd\u542f'
+}
+
+function getActionTimeoutMessage(action: ServiceAction) {
+  return `${getActionLabel(action)}\u8d85\u65f6\uff0c\u8bf7\u68c0\u67e5\u670d\u52a1\u8fdb\u7a0b\u4e0e\u65e5\u5fd7\u3002`
+}
+
+async function runServiceActionWithTimeout(action: ServiceAction, serviceId: ServiceId) {
+  return new Promise<Awaited<ReturnType<typeof servicesApi.runAction>>>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(getActionTimeoutMessage(action)))
+    }, SERVICE_ACTION_TIMEOUT_MS)
+
+    void servicesApi.runAction(action, serviceId)
+      .then(result => {
+        window.clearTimeout(timer)
+        resolve(result)
+      })
+      .catch(error => {
+        window.clearTimeout(timer)
+        reject(error)
+      })
+  })
+}
+
+function isActionTimeoutError(action: ServiceAction, error: unknown) {
+  return error instanceof Error && error.message === getActionTimeoutMessage(action)
+}
+
 function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardViewModel {
   const transition = getServiceTransition(service.id)
   const isTransitioning = transition.phase !== 'idle'
@@ -551,6 +587,29 @@ function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardVi
     stateHeadline = '\u505c\u6b62\u540e\u91cd\u65b0\u62c9\u8d77'
     statusDetail = '\u670d\u52a1\u6b63\u5728\u6267\u884c\u91cd\u542f\u6d41\u7a0b\uff1a\u5148\u505c\u6b62\u65e7\u8fdb\u7a0b\uff0c\u518d\u542f\u52a8\u65b0\u8fdb\u7a0b\u3002'
     recommendation = '\u91cd\u542f\u671f\u95f4\u6d4f\u89c8\u5668\u5165\u53e3\u53ef\u80fd\u77ed\u6682\u4e0d\u53ef\u7528\uff0c\u8bf7\u7a0d\u5019\u3002'
+  } else if (recent && transition.lastOutcome === 'timeout' && transition.lastAction) {
+    if (didActionReachDesiredState(transition.lastAction, service.running)) {
+      visualState = 'recovering'
+      badgeType = 'success'
+      badgeLabel = '\u8d85\u65f6\u540e\u6062\u590d'
+      stateHeadline = '\u72b6\u6001\u5df2\u8ffd\u4e0a'
+      statusDetail = '\u672c\u6b21\u64cd\u4f5c\u867d\u7136\u8d85\u65f6\uff0c\u4f46\u670d\u52a1\u76ee\u524d\u5df2\u8fbe\u5230\u9884\u671f\u72b6\u6001\u3002'
+      recommendation = '\u5efa\u8bae\u7ee7\u7eed\u89c2\u5bdf\u65e5\u5fd7\uff0c\u786e\u8ba4\u540e\u7eed\u4e0d\u518d\u51fa\u73b0\u963b\u585e\u6216\u5361\u4f4f\u3002'
+    } else if (transition.lastAction === 'stop') {
+      visualState = 'stop_timeout'
+      badgeType = 'warning'
+      badgeLabel = '\u505c\u6b62\u8d85\u65f6'
+      stateHeadline = '\u672a\u80fd\u5728\u9884\u671f\u5185\u505c\u4e0b'
+      statusDetail = transition.message || getActionTimeoutMessage(transition.lastAction)
+      recommendation = '\u5efa\u8bae\u5148\u67e5\u770b\u662f\u5426\u6709\u5b50\u8fdb\u7a0b\u5360\u7528\uff0c\u518d\u91cd\u8bd5\u505c\u6b62\u6216\u6267\u884c\u91cd\u542f\u3002'
+    } else {
+      visualState = 'start_timeout'
+      badgeType = 'warning'
+      badgeLabel = transition.lastAction === 'restart' ? '\u91cd\u542f\u8d85\u65f6' : '\u542f\u52a8\u8d85\u65f6'
+      stateHeadline = transition.lastAction === 'restart' ? '\u91cd\u65b0\u62c9\u8d77\u8d85\u51fa\u9884\u671f' : '\u670d\u52a1\u5c31\u7eea\u8017\u65f6\u8fc7\u957f'
+      statusDetail = transition.message || getActionTimeoutMessage(transition.lastAction)
+      recommendation = '\u5efa\u8bae\u5148\u67e5\u770b\u542f\u52a8\u65e5\u5fd7\u4e0e\u7aef\u53e3\u5360\u7528\uff0c\u786e\u8ba4\u540e\u518d\u91cd\u8bd5\u3002'
+    }
   } else if (recent && transition.lastOutcome === 'error') {
     visualState = 'failed'
     badgeType = 'error'
@@ -633,7 +692,7 @@ async function runServiceAction(action: ServiceAction, serviceId: ServiceId) {
     message: '',
   })
   try {
-    const result = await servicesApi.runAction(action, serviceId)
+    const result = await runServiceActionWithTimeout(action, serviceId)
     const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'
     setServiceTransition(serviceId, {
       phase: 'idle',
@@ -650,11 +709,11 @@ async function runServiceAction(action: ServiceAction, serviceId: ServiceId) {
     setServiceTransition(serviceId, {
       phase: 'idle',
       lastAction: action,
-      lastOutcome: 'error',
+      lastOutcome: isActionTimeoutError(action, error) ? 'timeout' : 'error',
       message: text,
     })
-    pushLog('error', `${serviceId} 操作失败`, text)
-    message.error(text)
+    pushLog(isActionTimeoutError(action, error) ? 'warning' : 'error', `${serviceId} \u64cd\u4f5c\u5931\u8d25`, text)
+    isActionTimeoutError(action, error) ? message.warning(text) : message.error(text)
   } finally {
     activeAction.value = null
   }
@@ -980,6 +1039,12 @@ onBeforeUnmount(() => {
 .service-indicator--stopping {
   background: #f59e0b;
   box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.14);
+}
+
+.service-indicator--start_timeout,
+.service-indicator--stop_timeout {
+  background: #f97316;
+  box-shadow: 0 0 0 8px rgba(249, 115, 22, 0.16);
 }
 
 .service-indicator--restarting {
