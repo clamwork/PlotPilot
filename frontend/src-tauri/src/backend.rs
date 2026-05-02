@@ -93,6 +93,15 @@ impl BackendManager {
         Ok(())
     }
 
+    pub(crate) fn resolve_runtime_log_file_path(&self) -> PathBuf {
+        if Self::should_inject_prod_data_dir() {
+            if let Ok(data_dir) = Self::resolve_prod_data_dir(&self._app_handle) {
+                return data_dir.join("logs").join("aitext.log");
+            }
+        }
+        self.project_root.join("logs").join("aitext.log")
+    }
+
     /// PyInstaller onedir：`$RESOURCE/plotpilot-backend/plotpilot-backend.exe`（见 tauri.conf resources 映射）
     fn find_frozen_backend_exe(handle: &AppHandle) -> Option<PathBuf> {
         // 方案 1a：与 bundle.resources 映射一致（推荐；安装包与 tauri build 均可用）
@@ -415,6 +424,41 @@ impl BackendManager {
     }
 
     /// 获取运行状态
+
+    pub fn health_check_passed(&self, port: u16) -> bool {
+        if port == 0 {
+            return false;
+        }
+        let health_url = format!("http://127.0.0.1:{}/health", port);
+        let agent: Agent = Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(2)))
+            .build()
+            .into();
+
+        matches!(agent.get(&health_url).call(), Ok(resp) if resp.status().as_u16() == 200)
+    }
+
+    pub fn diagnose_runtime_state(&self) -> RuntimeDiagnostic {
+        let port = self.get_port();
+        let process_running = self.is_running();
+        let port_listening = if port > 0 {
+            Self::is_port_listening(port)
+        } else {
+            false
+        };
+        let health_check_ok = if port_listening {
+            self.health_check_passed(port)
+        } else {
+            false
+        };
+
+        RuntimeDiagnostic {
+            port,
+            process_running,
+            port_listening,
+            health_check_ok,
+        }
+    }
     pub fn is_running(&self) -> bool {
         let mut guard = self.child.lock().unwrap();
         match guard.as_mut() {
@@ -621,6 +665,14 @@ impl BackendManager {
     }
 }
 
+
+#[derive(Debug, Clone)]
+pub struct RuntimeDiagnostic {
+    pub port: u16,
+    pub process_running: bool,
+    pub port_listening: bool,
+    pub health_check_ok: bool,
+}
 impl Drop for BackendManager {
     fn drop(&mut self) {
         self.terminate_hard();

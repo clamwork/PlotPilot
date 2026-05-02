@@ -1,1321 +1,1538 @@
 <template>
-  <div class="home">
-    <StatsSidebar
-      @create-book="focusCreateInput"
-      @refresh-list="handleRefreshList"
-      @collapsed-change="handleSidebarCollapsedChange"
-    />
-    <div class="home-content" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
-      <div class="home-bg" aria-hidden="true" />
+  <div class="service-console">
+    <div class="service-console__bg" aria-hidden="true" />
 
-      <div class="container">
-        <!-- Header -->
-        <header class="header">
-          <div class="header-content">
-            <h1 class="title">墨枢 · 长篇叙事工作台</h1>
-            <p class="subtitle">
-              以梗概与类型开局，选定目标篇幅；宏观结构、幕次与节拍由后台自动编排，你专注把故事写下去即可。
+    <main class="service-console__container">
+      <section class="hero-card">
+        <div class="hero-card__eyebrow">PlotPilot Local Runtime</div>
+        <div class="hero-card__header">
+          <div class="hero-copy">
+            <h1 class="hero-card__title">本地服务控制台</h1>
+            <p class="hero-card__subtitle">
+              桌面壳只负责守护本地运行环境。你可以在这里查看服务状态、执行启动/停止/重启，
+              再通过浏览器进入实际业务界面。
             </p>
           </div>
-        </header>
 
-        <!-- Create Card -->
-        <n-card class="create-card" :bordered="false">
-          <n-space vertical :size="20">
-            <div class="create-header">
-              <div class="create-title-wrap">
-                <span class="create-icon">✨</span>
-                <h3 class="create-title">新建书目</h3>
-              </div>
-              <n-button text type="primary" @click="showAdvanced = !showAdvanced">
-                <template #icon>
-                  <n-icon><component :is="showAdvanced ? IconChevronUp : IconChevronDown" /></n-icon>
-                </template>
-                {{ showAdvanced ? '收起高级' : '高级（自定义章数/每章字数）' }}
-              </n-button>
-            </div>
-
-            <n-input
-              ref="createInputRef"
-              v-model:value="newBook.premise"
-              type="textarea"
-              placeholder="用一段话写清主线与爽点预期（不超过 2000 字）…&#10;&#10;例如：废柴赘婿觉醒签到系统，从被退婚到一方巨擘。"
-              :rows="5"
-              :disabled="creating"
-              size="large"
-              class="premise-input"
-              show-count
-              :maxlength="PREMISE_MAX_LEN"
-            />
-
-            <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen" class="preset-row">
-              <n-gi>
-                <n-form-item label="赛道 / 类型">
-                  <n-select
-                    v-model:value="newBook.genre"
-                    :options="genreOptions"
-                    placeholder="选择赛道（系统会按预设推进）"
-                    :disabled="creating"
-                  />
-                </n-form-item>
-              </n-gi>
-              <n-gi>
-                <n-form-item label="世界观基调">
-                  <n-select
-                    v-model:value="newBook.worldPreset"
-                    :options="worldPresetOptions"
-                    placeholder="选择基调（不可自填 Prompt）"
-                    :disabled="creating"
-                  />
-                </n-form-item>
-              </n-gi>
-            </n-grid>
-
-            <div v-show="!showAdvanced" class="length-tier-block">
-              <div class="length-tier-label">目标篇幅（选一个即可，系统按网文常用节奏推导章数）</div>
-              <n-radio-group v-model:value="lengthTier" name="lengthTier" class="length-tier-group">
-                <n-space :size="14" :wrap="true" align="flex-start" class="length-tier-space">
-                  <n-radio
-                    v-for="opt in lengthTierOptions"
-                    :key="opt.value"
-                    :value="opt.value"
-                    :disabled="creating"
-                    class="length-tier-radio"
-                  >
-                    <div class="length-tier-option-inner">
-                      <span class="length-tier-title">{{ opt.title }}</span>
-                      <span class="length-tier-hint">{{ opt.hint }}</span>
-                    </div>
-                  </n-radio>
-                </n-space>
-              </n-radio-group>
-            </div>
-
-            <div v-show="showAdvanced" class="advanced-settings">
-              <n-alert type="info" :show-icon="true" style="margin-bottom: 12px; font-size: 12px">
-                自定义章数与每章字数时，不再使用「目标篇幅」档位推导；结构提示仍会在后台写入梗概供模型使用。
-              </n-alert>
-              <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen">
-                <n-gi>
-                  <n-form-item label="书名">
-                    <n-input v-model:value="newBook.title" placeholder="留空则从梗概自动截取" />
-                  </n-form-item>
-                </n-gi>
-                <n-gi>
-                  <n-form-item label="章节数">
-                    <n-input-number v-model:value="newBook.chapters" :min="1" :max="9999" class="w-full" placeholder="默认 100 章" />
-                  </n-form-item>
-                </n-gi>
-                <n-gi>
-                  <n-form-item label="每章字数">
-                    <n-input-number v-model:value="newBook.words" :min="500" :max="10000" :step="500" class="w-full" />
-                  </n-form-item>
-                </n-gi>
-              </n-grid>
-            </div>
-
-            <n-space justify="end">
-              <n-button
-                type="primary"
-                size="large"
-                round
-                :loading="creating"
-                :disabled="!newBook.premise.trim() || !newBook.genre || !newBook.worldPreset"
-                @click="handleCreate"
-              >
-                <template #icon>
-                  <n-icon><IconSpark /></n-icon>
-                </template>
-                建档并进入工作台
-              </n-button>
-            </n-space>
-          </n-space>
-        </n-card>
-
-        <!-- Books Section -->
-        <section class="books-section">
-          <div class="section-header">
-            <div class="section-left">
-              <h2 class="section-title">我的书目</h2>
-              <span class="book-count" v-if="!loading">{{ filteredBooks.length }} 本</span>
-            </div>
-            <div class="section-right">
-              <n-input
-                v-model:value="searchQuery"
-                placeholder="搜索书名或类型…"
-                clearable
-                round
-                class="search-input"
-              >
-                <template #prefix>
-                  <n-icon><IconSearch /></n-icon>
-                </template>
-              </n-input>
-              <n-button
-                v-if="selectedBooks.length > 0"
-                type="error"
-                secondary
-                @click="showBatchDeleteConfirm = true"
-              >
-                <template #icon>
-                  <n-icon><IconTrash /></n-icon>
-                </template>
-                删除选中 ({{ selectedBooks.length }})
-              </n-button>
-            </div>
-          </div>
-
-          <!-- Loading State -->
-          <div v-if="loading" class="loading-state">
-            <n-spin size="large" />
-            <p>加载中…</p>
-          </div>
-
-          <!-- Empty State -->
-          <div v-else-if="books.length === 0" class="empty-state">
-            <div class="empty-illustration">
-              <span class="empty-icon">📚</span>
-            </div>
-            <h3 class="empty-title">还没有书目</h3>
-            <p class="empty-desc">在上方输入你的故事创意，开启创作之旅</p>
-            <n-button type="primary" size="large" round @click="focusCreateInput">
-              <template #icon>
-                <n-icon><IconSpark /></n-icon>
-              </template>
-              创建第一本书
+          <div class="hero-card__actions">
+            <n-button secondary strong @click="refreshDashboard" :loading="loading">
+              立即刷新
+            </n-button>
+            <n-button
+              strong
+              :type="autoRefreshEnabled ? 'success' : 'default'"
+              @click="toggleAutoRefresh"
+            >
+              {{ autoRefreshEnabled ? '自动巡检中' : '开启自动巡检' }}
+            </n-button>
+            <n-button
+              type="primary"
+              strong
+              :disabled="!webPortalUrl"
+              @click="openWebPortal"
+            >
+              打开浏览器入口
             </n-button>
           </div>
+        </div>
 
-          <!-- No Results State -->
-          <div v-else-if="filteredBooks.length === 0" class="no-results-state">
-            <span class="no-results-icon">🔍</span>
-            <p>未找到匹配「{{ searchQuery }}」的书目</p>
-            <n-button text type="primary" @click="searchQuery = ''">清除搜索</n-button>
+        <div v-if="hasServiceIssue" class="alert-strip">
+          <div class="alert-strip__dot" />
+          <div>
+            <strong>发现本地服务异常</strong>
+            <p>至少有一个关键服务不可用。可直接在下方执行启动或重启。</p>
+          </div>
+        </div>
+
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <span class="hero-stat__label">运行服务</span>
+            <strong class="hero-stat__value">{{ runningCount }}/2</strong>
+          </div>
+          <div class="hero-stat">
+            <span class="hero-stat__label">浏览器入口</span>
+            <strong class="hero-stat__value">{{ webPortalUrl || '等待服务' }}</strong>
+          </div>
+          <div class="hero-stat">
+            <span class="hero-stat__label">上次巡检</span>
+            <strong class="hero-stat__value">{{ lastRefreshText }}</strong>
+          </div>
+          <div class="hero-stat">
+            <span class="hero-stat__label">巡检模式</span>
+            <strong class="hero-stat__value">{{ autoRefreshEnabled ? '每 8 秒自动轮询' : '手动刷新' }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid-section">
+        <article
+          v-for="service in serviceCards"
+          :key="service.id"
+          class="service-card"
+          :class="{
+            'service-card--down': ['stopped', 'start_timeout', 'stop_timeout', 'failed'].includes(service.visualState),
+            'service-card--transition': service.isTransitioning,
+          }"
+        >
+          <div class="service-card__top">
+            <div>
+              <div class="service-card__label-row">
+                <h2 class="service-card__title">{{ service.label }}</h2>
+                <n-tag
+                  size="small"
+                  round
+                  :type="service.badgeType"
+                  :bordered="false"
+                >
+                  {{ service.badgeLabel }}
+                </n-tag>
+              </div>
+              <p class="service-card__desc">{{ service.statusDetail }}</p>
+              <div class="service-state-row">
+                <span class="service-state-row__label">{{ "\u72b6\u6001\u673a\u9636\u6bb5" }}</span>
+                <strong>{{ service.stateHeadline }}</strong>
+                <span class="service-state-row__meta">{{ service.durationLabel }}</span>
+                <span class="service-state-row__meta">{{ service.timeoutHint }}</span>
+              </div>
+            </div>
+            <div class="service-indicator" :class="service.indicatorClass" />
           </div>
 
-          <!-- Books Grid -->
-          <template v-else>
-            <!-- Selection Bar (仅搜索模式下显示) -->
-            <div class="selection-bar" v-if="filteredBooks.length > 0 && searchQuery">
-              <n-checkbox
-                :checked="isAllSelected"
-                :indeterminate="isPartialSelected"
-                @update:checked="toggleSelectAll"
-              >
-                全选
-              </n-checkbox>
-              <span class="selection-hint" v-if="selectedBooks.length > 0">
-                已选择 {{ selectedBooks.length }} 本
-              </span>
+          <div class="service-meta">
+            <div class="service-meta__item">
+              <span class="service-meta__label">访问地址</span>
+              <span class="service-meta__value">{{ service.url || '未就绪' }}</span>
             </div>
+            <div class="service-meta__item">
+              <span class="service-meta__label">监听端口</span>
+              <span class="service-meta__value">{{ service.port ?? '—' }}</span>
+            </div>
+            <div class="service-meta__item">
+              <span class="service-meta__label">建议动作</span>
+              <span class="service-meta__value">{{ service.recommendation }}</span>
+            </div>
+            <div class="service-meta__item">
+              <span class="service-meta__label">依赖关系</span>
+              <span class="service-meta__value">{{ service.id === 'frontend' ? '依赖后端 HTTP 服务' : '核心本地 API 进程' }}</span>
+            </div>
+          </div>
 
-            <!-- 书目卡片：单行横排，多于可视宽度时横向滚动 -->
-            <div class="books-list-wrap">
-              <div class="books-grid">
-                <div
-                  v-for="(book, idx) in displayBooks"
-                  :key="book.slug"
-                  class="book-card"
-                  :class="{ 'is-selected': selectedBooks.includes(book.slug) }"
-                  :style="{ animationDelay: `${idx * 0.04}s` }"
-                  @click="navigateToBook(book.slug)"
-                >
-                  <div class="card-top">
-                    <span class="book-dot" :class="`dot-${book.stage}`"></span>
-                    <span class="book-card-title">{{ book.title }}</span>
-                  </div>
-                  <div class="card-meta">
-                    <n-tag :type="getStageType(book.stage)" size="small" round borderable>
-                      {{ book.stage_label }}
-                    </n-tag>
-                    <span class="meta-genre">{{ book.genre || '未分类' }}</span>
-                  </div>
-                  <div class="card-stats" v-if="book.chapter_count || book.word_count">
-                    <template v-if="book.chapter_count">
-                      <span>{{ book.chapter_count }} 章</span>
-                    </template>
-                    <template v-if="book.word_count">
-                      <span>{{ formatWordCount(book.word_count) }}</span>
-                    </template>
-                  </div>
-                  <div class="card-actions" @click.stop>
-                    <n-checkbox
-                      :checked="selectedBooks.includes(book.slug)"
-                      @update:checked="(val: boolean) => toggleBookSelection(book.slug, val)"
-                    />
-                    <n-popconfirm
-                      positive-text="删除"
-                      negative-text="取消"
-                      @positive-click="() => handleDeleteBook(book.slug)"
-                    >
-                      <template #trigger>
-                        <n-button
-                          quaternary
-                          circle
-                          size="tiny"
-                          type="error"
-                          :loading="deletingSlug === book.slug"
-                          aria-label="删除书目"
-                        >
-                          <template #icon>
-                            <n-icon><IconTrash /></n-icon>
-                          </template>
-                        </n-button>
-                      </template>
-                      将删除「{{ book.title }}」及本地全部章节与设定，且不可恢复。确定删除吗？
-                    </n-popconfirm>
-                  </div>
+          <div class="service-card__actions">
+            <n-button
+              type="success"
+              secondary
+              :loading="activeAction?.serviceId === service.id && activeAction?.action === 'start'"
+              :disabled="!service.canStart"
+              @click="runServiceAction('start', service.id)"
+            >
+              启动
+            </n-button>
+            <n-button
+              type="warning"
+              secondary
+              :loading="activeAction?.serviceId === service.id && activeAction?.action === 'stop'"
+              :disabled="!service.canStop"
+              @click="runServiceAction('stop', service.id)"
+            >
+              停止
+            </n-button>
+            <n-button
+              type="primary"
+              secondary
+              :loading="activeAction?.serviceId === service.id && activeAction?.action === 'restart'"
+              :disabled="!service.canRestart"
+              @click="runServiceAction('restart', service.id)"
+            >
+              重启
+            </n-button>
+            <n-button
+              quaternary
+              :disabled="!service.url"
+              @click="service.url && servicesApi.openUrl(service.url)"
+            >
+              打开地址
+            </n-button>
+          </div>
+        </article>
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">??????</h3>
+            <n-tag size="small" :bordered="false" type="info">??????</n-tag>
+          </div>
+          <div class="env-grid">
+            <div class="env-item">
+              <span class="env-item__label">Python ???</span>
+              <strong class="env-item__value">{{ environmentInfo?.python_available ? "??" : "??/ ???" }}</strong>
+            </div>
+            <div class="env-item">
+              <span class="env-item__label">??? Python ??/span>
+              <strong class="env-item__value">{{ environmentInfo?.has_embedded_python ? "?????" : "??????" }}</strong>
+            </div>
+            <div class="env-item env-item--wide">
+              <span class="env-item__label">????????/span>
+              <strong class="env-item__value env-item__value--path">{{ environmentInfo?.project_root || "??????" }}</strong>
+            </div>
+            <div class="env-item env-item--wide">
+              <div class="timeout-config__header">
+                <span class="env-item__label">{{ "\u670d\u52a1\u8d85\u65f6\u9608\u503c" }}</span>
+                <strong class="env-item__value">{{ serviceActionTimeoutLabel }}</strong>
+              </div>
+              <div class="timeout-config__controls">
+                <n-input-number
+                  :value="serviceActionTimeoutSeconds"
+                  :min="TIMEOUT_MIN_SECONDS"
+                  :max="TIMEOUT_MAX_SECONDS"
+                  :step="5"
+                  size="small"
+                  class="timeout-config__input"
+                  @update:value="handleTimeoutSecondsChange"
+                />
+                <div class="timeout-config__presets">
+                  <n-button
+                    v-for="preset in timeoutPresets"
+                    :key="preset"
+                    size="small"
+                    secondary
+                    :type="serviceActionTimeoutSeconds === preset ? 'primary' : 'default'"
+                    @click="applyTimeoutPreset(preset)"
+                  >
+                    {{ preset }}s
+                  </n-button>
                 </div>
               </div>
-
-              <!-- 折叠提示 + 查看全部按钮 -->
-              <div v-if="hiddenCount > 0 && !searchQuery" class="books-fold-bar">
-                <span class="fold-hint">还有 {{ hiddenCount }} 本书未展示</span>
-                <n-button size="small" type="primary" secondary round @click="showAllModal = true">
-                  查看全部 {{ filteredBooks.length }} 本
-                </n-button>
-              </div>
-            </div>
-          </template>
-        </section>
-
-        <!-- 底部版权 -->
-        <footer class="home-footer">
-          <span class="footer-brand">PlotPilot</span>
-          <span class="footer-sep">·</span>
-          <span class="footer-sub">墨枢</span>
-          <span class="footer-text">由 PlotPilot（墨枢）团队倾力开发</span>
-          <a class="footer-link" href="https://www.douyin.com/user/MS4wLjABAAAA91472902104" target="_blank" rel="noopener noreferrer">
-            抖音：林亦 91472902104
-          </a>
-          <span class="footer-text">每晚 9 点随缘直播</span>
-        </footer>
-      </div>
-    </div>
-
-    <!-- Batch Delete Confirm Modal -->
-    <n-modal v-model:show="showBatchDeleteConfirm" preset="confirm" type="error" title="确认批量删除">
-      <template #default>
-        确定要删除选中的 <strong>{{ selectedBooks.length }}</strong> 本书籍吗？此操作不可恢复。
-      </template>
-      <template #action>
-        <n-space>
-          <n-button @click="showBatchDeleteConfirm = false">取消</n-button>
-          <n-button type="error" :loading="batchDeleting" @click="handleBatchDelete">
-            确认删除
-          </n-button>
-        </n-space>
-      </template>
-    </n-modal>
-
-    <!-- 新书向导：仅挂载一次且 show 恒为 true，避免「先关再开」的双过渡（原 newNovelId + showSetupGuide 分步更新导致） -->
-    <NovelSetupGuide
-      v-if="setupWizard"
-      :key="setupWizard.novelId"
-      :novel-id="setupWizard.novelId"
-      :target-chapters="setupWizard.targetChapters"
-      :show="true"
-      @update:show="(open) => { if (!open) setupWizard = null }"
-      @complete="handleSetupComplete"
-      @skip="handleSetupSkip"
-    />
-
-    <!-- LLM Settings Modal -->
-    <LLMSettingsModal v-model:show="showLLMSettings" />
-
-    <!-- 查看全部书目弹窗 -->
-    <n-modal
-      v-model:show="showAllModal"
-      preset="card"
-      title=""
-      :style="{ width: '92vw', maxWidth: '960px', height: '80vh', marginTop: '8vh' }"
-      :bordered="true"
-      :segmented="{ content: true, footer: 'soft' }"
-      :mask-closable="true"
-      :close-on-esc="true"
-    >
-      <template #header>
-        <div class="all-books-header">
-          <span class="all-books-header-title">全部书目</span>
-          <n-tag size="small" type="info" :bordered="false">
-            {{ filteredBooks.length }} 本
-          </n-tag>
-        </div>
-      </template>
-
-      <div class="all-books-body">
-        <n-input
-          v-model:value="modalSearchQuery"
-          placeholder="搜索书目…"
-          clearable
-          size="small"
-          style="max-width: 280px; margin-bottom: 16px"
-        >
-          <template #prefix>
-            <n-icon><IconSearch /></n-icon>
-          </template>
-        </n-input>
-        <div class="all-books-grid">
-          <div
-            v-for="book in modalFilteredBooks"
-            :key="book.slug"
-            class="book-card"
-            @click="navigateToBook(book.slug); showAllModal = false"
-          >
-            <div class="card-top">
-              <span class="book-dot" :class="`dot-${book.stage}`"></span>
-              <span class="book-card-title">{{ book.title }}</span>
-            </div>
-            <div class="card-meta">
-              <n-tag :type="getStageType(book.stage)" size="small" round borderable>
-                {{ book.stage_label }}
-              </n-tag>
-              <span class="meta-genre">{{ book.genre || '未分类' }}</span>
-            </div>
-            <div class="card-stats" v-if="book.chapter_count || book.word_count">
-              <template v-if="book.chapter_count">
-                <span>{{ book.chapter_count }} 章</span>
-              </template>
-              <template v-if="book.word_count">
-                <span>{{ formatWordCount(book.word_count) }}</span>
-              </template>
-            </div>
-            <div class="card-actions" @click.stop>
-              <n-popconfirm
-                positive-text="删除"
-                negative-text="取消"
-                @positive-click="() => handleDeleteBook(book.slug)"
-              >
-                <template #trigger>
-                  <n-button
-                    quaternary
-                    circle
-                    size="tiny"
-                    type="error"
-                    :loading="deletingSlug === book.slug"
-                    aria-label="删除书目"
-                  >
-                    <template #icon>
-                      <n-icon><IconTrash /></n-icon>
-                    </template>
-                  </n-button>
-                </template>
-                将删除「{{ book.title }}」及本地全部章节与设定，且不可恢复。确定删除吗？
-              </n-popconfirm>
+              <p class="timeout-config__hint">
+                {{ "\u8303\u56f4\uff1a" }}{{ TIMEOUT_MIN_SECONDS }}-{{ TIMEOUT_MAX_SECONDS }}{{ "\u79d2\uff0c\u4f1a\u4fdd\u5b58\u5230\u672c\u5730\u8bbe\u7f6e\u3002\u9608\u503c\u8fc7\u5c0f\u53ef\u80fd\u5bfc\u81f4\u8bef\u62a5\u8d85\u65f6\u3002" }}
+              </p>
+              <p class="timeout-config__hint">
+                {{ "\u8fd0\u884c\u8bca\u65ad\uff1a" }}{{ runtimeDiagnosis?.summary || "\u6682\u672a\u83b7\u53d6" }}
+              </p>
             </div>
           </div>
-        </div>
-      </div>
-    </n-modal>
+        </article>
+
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">日志筛选面板</h3>
+            <div class="log-panel-actions">
+              <n-button
+                text
+                :type="logAutoTailEnabled ? 'success' : 'default'"
+                @click="toggleLogAutoTail"
+              >
+                {{ logAutoTailEnabled ? '日志追尾中' : '开启日志追尾' }}
+              </n-button>
+              <n-button text type="primary" @click="refreshDashboard">
+                刷新日志
+              </n-button>
+            </div>
+          </div>
+
+          <div class="log-toolbar">
+            <n-input
+              v-model:value="logSearch"
+              clearable
+              placeholder="搜索日志关键词"
+              class="log-toolbar__search"
+            />
+            <div class="log-toolbar__toggles">
+              <n-button
+                size="small"
+                secondary
+                :type="logLevelFilter === 'all' ? 'primary' : 'default'"
+                @click="logLevelFilter = 'all'"
+              >
+                全部
+              </n-button>
+              <n-button
+                size="small"
+                secondary
+                :type="logLevelFilter === 'error' ? 'error' : 'default'"
+                @click="logLevelFilter = 'error'"
+              >
+                仅错误
+              </n-button>
+              <n-button
+                size="small"
+                secondary
+                :type="logLevelFilter === 'warning' ? 'warning' : 'default'"
+                @click="logLevelFilter = 'warning'"
+              >
+                仅警告
+              </n-button>
+              <n-button size="small" quaternary @click="clearLogFilters">
+                清空筛选
+              </n-button>
+            </div>
+          </div>
+
+          <div class="log-badges">
+            <n-tag size="small" :bordered="false" type="default">总计 {{ runtimeLogs?.line_count ?? 0 }}</n-tag>
+            <n-tag size="small" :bordered="false" type="error">ERROR {{ logStats.error }}</n-tag>
+            <n-tag size="small" :bordered="false" type="warning">WARNING {{ logStats.warning }}</n-tag>
+            <n-tag size="small" :bordered="false" type="info">INFO {{ logStats.info }}</n-tag>
+            <n-tag size="small" :bordered="false" type="success">显示 {{ filteredLogEntries.length }}</n-tag>
+          </div>
+
+          <div class="log-summary">
+            <span>日志路径：{{ runtimeLogs?.path || '未获取到' }}</span>
+            <span>筛选状态：{{ logFilterSummary }}</span>
+            <span>追尾状态：{{ logAutoTailEnabled ? '自动刷新并滚动到底部' : '手动查看' }}</span>
+          </div>
+
+          <div ref="logViewerRef" class="log-viewer">
+            <div v-if="filteredLogEntries.length" class="log-lines">
+              <div
+                v-for="entry in filteredLogEntries"
+                :key="entry.id"
+                class="log-line"
+                :class="`log-line--${entry.level}`"
+              >
+                <span class="log-line__badge">{{ entry.levelLabel }}</span>
+                <code class="log-line__text">{{ entry.text }}</code>
+              </div>
+            </div>
+            <div v-else class="log-empty">
+              当前筛选条件下没有匹配日志。
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="details-grid">
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">后端健康信息</h3>
+            <n-tag size="small" :bordered="false" :type="healthPayload ? 'success' : 'default'">
+              {{ healthPayload ? '已获取' : '暂无数据' }}
+            </n-tag>
+          </div>
+          <pre class="health-preview">{{ healthPreview }}</pre>
+        </article>
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">日志说明</h3>
+            <n-tag size="small" :bordered="false" type="warning">高亮与筛选</n-tag>
+          </div>
+          <ul class="info-list">
+            <li>这里读取的是本地真实日志文件，不是模拟数据。</li>
+            <li>支持按关键词搜索，也支持只看 ERROR 或 WARNING。</li>
+            <li>日志颜色遵循语义级别，便于快速扫出异常。</li>
+            <li>默认展示最后 200 行，适合定位最近崩溃、超时与重启问题。</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="details-grid details-grid--bottom">
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">最近操作记录</h3>
+            <n-tag size="small" :bordered="false" type="default">{{ actionLogs.length }} 条</n-tag>
+          </div>
+          <div v-if="actionLogs.length" class="timeline-list">
+            <div v-for="log in actionLogs" :key="log.id" class="timeline-item">
+              <div class="timeline-item__marker" :class="`timeline-item__marker--${log.level}`" />
+              <div class="timeline-item__content">
+                <div class="timeline-item__top">
+                  <strong>{{ log.title }}</strong>
+                  <span>{{ log.time }}</span>
+                </div>
+                <p>{{ log.message }}</p>
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-inline">暂无操作记录。</div>
+        </article>
+
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">建议运维流程</h3>
+            <n-tag size="small" :bordered="false" type="success">推荐</n-tag>
+          </div>
+          <ul class="info-list">
+            <li>先看 ERROR / WARNING 数量，再决定是否重启服务。</li>
+            <li>遇到启动失败时，先搜索端口、traceback、exception 等关键词。</li>
+            <li>若浏览器入口失效，优先筛选 ERROR，并配合后端健康信息一起看。</li>
+            <li>业务页面仍在浏览器中访问，桌面端只承担本地运维职责。</li>
+          </ul>
+        </article>
+      </section>
+    </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { h, ref, onMounted, computed, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
-import { useMessage, NIcon } from 'naive-ui'
-import { novelApi, type NovelDTO } from '../api/novel'
-import StatsSidebar from '@/components/stats/StatsSidebar.vue'
-import NovelSetupGuide from '@/components/onboarding/NovelSetupGuide.vue'
-import LLMSettingsModal from '@/components/LLMSettingsModal.vue'
-import { useStatsStore } from '@/stores/statsStore'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useMessage } from 'naive-ui'
+import {
+  servicesApi,
+  type EnvironmentInfo,
+  type ManagedServiceStatus,
+  type RuntimeLogSnapshot,
+  type ServiceRuntimeDiagnosis,
+  type ServiceAction,
+  type ServiceId,
+  type ServiceOverview,
+} from '../api/services'
 
-// Icons
-const IconSpark = () =>
-  h('svg', { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 24 24', width: '1em', height: '1em' },
-    h('path', { fill: 'currentColor', d: 'M13 2L3 14h8l-1 8 10-12h-8l1-8z' }))
-
-const IconSearch = () =>
-  h('svg', { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 24 24', width: '1em', height: '1em' },
-    h('path', { fill: 'currentColor', d: 'M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z' }))
-
-const IconTrash = () =>
-  h('svg', { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 24 24', width: '1em', height: '1em' },
-    h('path', { fill: 'currentColor', d: 'M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z' }))
-
-const IconChevronDown = () =>
-  h('svg', { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 24 24', width: '1em', height: '1em' },
-    h('path', { fill: 'currentColor', d: 'M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z' }))
-
-const IconChevronUp = () =>
-  h('svg', { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 24 24', width: '1em', height: '1em' },
-    h('path', { fill: 'currentColor', d: 'M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6 1.41 1.41z' }))
-
-interface BookListItem {
-  slug: string
+interface ActionLogItem {
+  id: number
   title: string
-  stage: string
-  stage_label: string
-  genre: string
-  chapter_count?: number
-  word_count?: number
+  message: string
+  time: string
+  level: 'info' | 'success' | 'warning' | 'error'
 }
 
-const router = useRouter()
+type LogLevelFilter = 'all' | 'error' | 'warning'
+type ParsedLogLevel = 'error' | 'warning' | 'info' | 'plain'
+type ServiceVisualState = 'running' | 'stopped' | 'starting' | 'stopping' | 'restarting' | 'start_timeout' | 'stop_timeout' | 'failed' | 'recovering'
+type ServiceTransitionPhase = 'idle' | 'starting' | 'stopping' | 'restarting'
+type ServiceBadgeType = 'default' | 'primary' | 'info' | 'success' | 'warning' | 'error'
+
+interface ServiceTransitionSnapshot {
+  phase: ServiceTransitionPhase
+  lastAction: ServiceAction | null
+  lastOutcome: 'success' | 'error' | 'timeout' | null
+  message: string
+  changedAt: number | null
+  startedAt: number | null
+  durationMs: number | null
+}
+
+interface ParsedLogEntry {
+  id: number
+  text: string
+  level: ParsedLogLevel
+  levelLabel: string
+}
+
+interface ServiceCardViewModel extends ManagedServiceStatus {
+  visualState: ServiceVisualState
+  badgeType: ServiceBadgeType
+  badgeLabel: string
+  stateHeadline: string
+  statusDetail: string
+  recommendation: string
+  durationLabel: string
+  timeoutHint: string
+  indicatorClass: string[]
+  isTransitioning: boolean
+  canStart: boolean
+  canStop: boolean
+  canRestart: boolean
+}
+
+const AUTO_REFRESH_INTERVAL = 8000
+const SERVICE_STATE_STICKY_MS = 10000
+const DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS = 15
+const TIMEOUT_MIN_SECONDS = 5
+const TIMEOUT_MAX_SECONDS = 120
+const TIMEOUT_STORAGE_KEY = 'plotpilot.serviceActionTimeoutSeconds'
+
 const message = useMessage()
-const statsStore = useStatsStore()
-
-const createInputRef = ref<any>(null)
-const showAdvanced = ref(false)
-const creating = ref(false)
 const loading = ref(false)
-
-const SIDEBAR_COLLAPSED_KEY = 'plotpilot_sidebar_collapsed'
-const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true')
-
-function handleSidebarCollapsedChange(isCollapsed: boolean) {
-  sidebarCollapsed.value = isCollapsed
-}
-const books = ref<BookListItem[]>([])
-const searchQuery = ref('')
-const deletingSlug = ref<string | null>(null)
-const showLLMSettings = ref(false)
-const showAllModal = ref(false)
-const modalSearchQuery = ref('')
-/** 有值时挂载向导；与 show 分离，挂载后始终 :show="true"，避免 Modal 先 false 再 true 闪烁 */
-const setupWizard = ref<{ novelId: string; targetChapters: number } | null>(null)
-
-// Batch delete
-const selectedBooks = ref<string[]>([])
-const showBatchDeleteConfirm = ref(false)
-const batchDeleting = ref(false)
-
-const PREMISE_MAX_LEN = 2000
-
-const newBook = ref({
-  title: '',
-  premise: '',
-  genre: '',
-  worldPreset: '',
-  chapters: 100,  // 默认 100 章
-  words: 2500,
+const autoRefreshEnabled = ref(true)
+const overview = ref<ServiceOverview | null>(null)
+const healthPayload = ref<Record<string, unknown> | null>(null)
+const environmentInfo = ref<EnvironmentInfo | null>(null)
+const runtimeDiagnosis = ref<ServiceRuntimeDiagnosis | null>(null)
+const runtimeLogs = ref<RuntimeLogSnapshot | null>(null)
+const lastRefreshAt = ref<Date | null>(null)
+const pollTimer = ref<number | null>(null)
+const logTailTimer = ref<number | null>(null)
+const transitionClockTimer = ref<number | null>(null)
+const actionLogs = ref<ActionLogItem[]>([])
+const activeAction = ref<{ serviceId: ServiceId; action: ServiceAction } | null>(null)
+const logSearch = ref('')
+const logLevelFilter = ref<LogLevelFilter>('all')
+const logAutoTailEnabled = ref(true)
+const logViewerRef = ref<HTMLElement | null>(null)
+const transitionClock = ref(Date.now())
+const timeoutPresets = [15, 30, 45, 60]
+const serviceActionTimeoutSeconds = ref(DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS)
+const serviceTransitions = ref<Record<ServiceId, ServiceTransitionSnapshot>>({
+  backend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null, startedAt: null, durationMs: null },
+  frontend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null, startedAt: null, durationMs: null },
 })
 
-/** V1 目标篇幅档（与高级自定义二选一） */
-const lengthTier = ref<'short' | 'standard' | 'epic'>('standard')
-const lengthTierOptions = [
-  {
-    value: 'short' as const,
-    title: 'A · 短篇快穿 / 脑洞文',
-    hint: '约 30 万字（按约 2000 字/章推导章数）',
-  },
-  {
-    value: 'standard' as const,
-    title: 'B · 标准商业连载',
-    hint: '约 100 万字',
-  },
-  {
-    value: 'epic' as const,
-    title: 'C · 宏大史诗巨著',
-    hint: '约 300 万字',
-  },
-]
+const serviceCards = computed<ServiceCardViewModel[]>(() => {
+  if (!overview.value) return []
+  return [overview.value.backend, overview.value.frontend].map(buildServiceCardViewModel)
+})
 
-const genreOptions = [
-  { label: '玄幻升级', value: '玄幻升级' },
-  { label: '都市爽文', value: '都市爽文' },
-  { label: '仙侠修真', value: '仙侠修真' },
-  { label: '科幻赛博', value: '科幻赛博' },
-  { label: '悬疑推理', value: '悬疑推理' },
-  { label: '历史架空', value: '历史架空' },
-  { label: '游戏异界', value: '游戏异界' },
-  { label: '言情甜宠', value: '言情甜宠' },
-  { label: '其他', value: '其他' },
-]
+const runningCount = computed(() => serviceCards.value.filter(item => item.running).length)
+const hasServiceIssue = computed(() =>
+  serviceCards.value.some(item => ['stopped', 'start_timeout', 'stop_timeout', 'failed'].includes(item.visualState)),
+)
 
-const worldPresetOptions = [
-  { label: '修仙风（宗门、境界、机缘）', value: '修仙风' },
-  { label: '赛博朋克（巨企、义体、霓虹）', value: '赛博朋克风' },
-  { label: '悬疑风（谜题、反转、线索）', value: '悬疑风' },
-  { label: '高武江湖（门派、恩怨）', value: '高武江湖' },
-  { label: '末日废土（生存、资源）', value: '末日废土' },
-  { label: '西幻史诗（王国、种族）', value: '西幻史诗' },
-  { label: '现代都市（职场、日常）', value: '现代都市' },
-  { label: '克系诡异（未知、调查）', value: '克系诡异' },
-]
+const webPortalUrl = computed(() => {
+  return overview.value?.frontend.url || overview.value?.backend.url?.replace(/\/health$/, '') || ''
+})
 
-const filteredBooks = computed(() => {
-  if (!searchQuery.value.trim()) {
-    return books.value
+const healthPreview = computed(() => {
+  if (!healthPayload.value) return '暂无健康数据，请先刷新服务状态。'
+  return JSON.stringify(healthPayload.value, null, 2)
+})
+
+const parsedLogEntries = computed<ParsedLogEntry[]>(() => {
+  const lines = runtimeLogs.value?.lines ?? []
+  return lines.map((text, index) => {
+    const upper = text.toUpperCase()
+    let level: ParsedLogLevel = 'plain'
+    let levelLabel = 'LOG'
+
+    if (upper.includes('ERROR') || upper.includes('CRITICAL') || upper.includes('TRACEBACK')) {
+      level = 'error'
+      levelLabel = 'ERROR'
+    } else if (upper.includes('WARNING') || upper.includes('WARN')) {
+      level = 'warning'
+      levelLabel = 'WARN'
+    } else if (upper.includes('INFO')) {
+      level = 'info'
+      levelLabel = 'INFO'
+    }
+
+    return {
+      id: index,
+      text,
+      level,
+      levelLabel,
+    }
+  })
+})
+
+const filteredLogEntries = computed(() => {
+  const keyword = logSearch.value.trim().toLowerCase()
+  return parsedLogEntries.value.filter(entry => {
+    if (logLevelFilter.value === 'error' && entry.level !== 'error') return false
+    if (logLevelFilter.value === 'warning' && entry.level !== 'warning') return false
+    if (keyword && !entry.text.toLowerCase().includes(keyword)) return false
+    return true
+  })
+})
+
+const logStats = computed(() => {
+  const stats = { error: 0, warning: 0, info: 0 }
+  for (const entry of parsedLogEntries.value) {
+    if (entry.level === 'error') stats.error += 1
+    else if (entry.level === 'warning') stats.warning += 1
+    else if (entry.level === 'info') stats.info += 1
   }
-  const query = searchQuery.value.toLowerCase()
-  return books.value.filter(
-    book =>
-      book.title.toLowerCase().includes(query) ||
-      (book.genre && book.genre.toLowerCase().includes(query))
-  )
+  return stats
 })
 
-/** 页面主区域最多展示的书目数量 */
-const MAX_VISIBLE_BOOKS = 6
-
-/** 页面实际展示的书目（截断，不滚动） */
-const displayBooks = computed(() => {
-  if (searchQuery.value.trim()) return filteredBooks.value
-  return filteredBooks.value.slice(0, MAX_VISIBLE_BOOKS)
+const logFilterSummary = computed(() => {
+  const parts: string[] = []
+  if (logLevelFilter.value === 'all') parts.push('全部级别')
+  if (logLevelFilter.value === 'error') parts.push('仅 ERROR')
+  if (logLevelFilter.value === 'warning') parts.push('仅 WARNING')
+  if (logSearch.value.trim()) parts.push(`关键词：${logSearch.value.trim()}`)
+  return parts.join(' / ')
 })
 
-/** 被隐藏的数量 */
-const hiddenCount = computed(() => {
-  if (searchQuery.value.trim()) return 0
-  return Math.max(0, filteredBooks.value.length - MAX_VISIBLE_BOOKS)
+const lastRefreshText = computed(() => {
+  if (!lastRefreshAt.value) return '尚未巡检'
+  return lastRefreshAt.value.toLocaleTimeString('zh-CN', { hour12: false })
 })
 
-/** 弹窗内的过滤 */
-const modalFilteredBooks = computed(() => {
-  if (!modalSearchQuery.value.trim()) return filteredBooks.value
-  const q = modalSearchQuery.value.toLowerCase()
-  return filteredBooks.value.filter(
-    book =>
-      book.title.toLowerCase().includes(q) ||
-      (book.genre && book.genre.toLowerCase().includes(q))
-  )
-})
+const serviceActionTimeoutMs = computed(() => serviceActionTimeoutSeconds.value * 1000)
+const serviceActionTimeoutLabel = computed(() => formatDuration(serviceActionTimeoutMs.value))
 
-const isAllSelected = computed(() => {
-  return filteredBooks.value.length > 0 && selectedBooks.value.length === filteredBooks.value.length
-})
+function pushLog(level: ActionLogItem['level'], title: string, messageText: string) {
+  actionLogs.value.unshift({
+    id: Date.now() + Math.floor(Math.random() * 1000),
+    title,
+    message: messageText,
+    time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    level,
+  })
+  actionLogs.value = actionLogs.value.slice(0, 10)
+}
 
-const isPartialSelected = computed(() => {
-  return selectedBooks.value.length > 0 && selectedBooks.value.length < filteredBooks.value.length
-})
+function clearLogFilters() {
+  logSearch.value = ''
+  logLevelFilter.value = 'all'
+}
 
-const fetchBooks = async () => {
+function clampTimeoutSeconds(value: number) {
+  return Math.min(TIMEOUT_MAX_SECONDS, Math.max(TIMEOUT_MIN_SECONDS, Math.round(value)))
+}
+
+function loadTimeoutSecondsPreference() {
+  if (typeof window === 'undefined') return DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS
+  const raw = window.localStorage.getItem(TIMEOUT_STORAGE_KEY)
+  const parsed = raw ? Number(raw) : NaN
+  return Number.isFinite(parsed) ? clampTimeoutSeconds(parsed) : DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS
+}
+
+function persistTimeoutSecondsPreference(value: number) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(TIMEOUT_STORAGE_KEY, String(value))
+}
+
+function handleTimeoutSecondsChange(value: number | null) {
+  const nextValue = clampTimeoutSeconds(value ?? DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS)
+  serviceActionTimeoutSeconds.value = nextValue
+  persistTimeoutSecondsPreference(nextValue)
+}
+
+function applyTimeoutPreset(value: number) {
+  handleTimeoutSecondsChange(value)
+}
+
+function getServiceTransition(serviceId: ServiceId): ServiceTransitionSnapshot {
+  return serviceTransitions.value[serviceId]
+}
+
+function setServiceTransition(serviceId: ServiceId, patch: Partial<ServiceTransitionSnapshot>) {
+  serviceTransitions.value[serviceId] = {
+    ...serviceTransitions.value[serviceId],
+    ...patch,
+    changedAt: Date.now(),
+  }
+}
+
+function isRecentTransition(snapshot: ServiceTransitionSnapshot) {
+  return !!snapshot.changedAt && Date.now() - snapshot.changedAt < SERVICE_STATE_STICKY_MS
+}
+
+function didActionReachDesiredState(action: ServiceAction, running: boolean) {
+  if (action === 'stop') return !running
+  return running
+}
+
+function getActionLabel(action: ServiceAction) {
+  return action === 'start' ? '\u542f\u52a8' : action === 'stop' ? '\u505c\u6b62' : '\u91cd\u542f'
+}
+
+function getActionTimeoutMessage(action: ServiceAction) {
+  return `${getActionLabel(action)}\u8d85\u65f6\uff0c\u8bf7\u68c0\u67e5\u670d\u52a1\u8fdb\u7a0b\u4e0e\u65e5\u5fd7\u3002`
+}
+
+function formatDuration(ms: number | null) {
+  if (!ms || ms < 0) return '\u672a\u8bb0\u5f55'
+  const totalSeconds = Math.max(1, Math.round(ms / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return minutes > 0 ? `${minutes}\u5206 ${seconds}\u79d2` : `${seconds}\u79d2`
+}
+
+function getTransitionElapsedMs(snapshot: ServiceTransitionSnapshot) {
+  if (snapshot.phase !== 'idle' && snapshot.startedAt) {
+    return transitionClock.value - snapshot.startedAt
+  }
+  return snapshot.durationMs
+}
+
+async function runServiceActionWithTimeout(action: ServiceAction, serviceId: ServiceId) {
+  return new Promise<Awaited<ReturnType<typeof servicesApi.runAction>>>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(getActionTimeoutMessage(action)))
+    }, serviceActionTimeoutMs.value)
+
+    void servicesApi.runAction(action, serviceId)
+      .then(result => {
+        window.clearTimeout(timer)
+        resolve(result)
+      })
+      .catch(error => {
+        window.clearTimeout(timer)
+        reject(error)
+      })
+  })
+}
+
+function isActionTimeoutError(action: ServiceAction, error: unknown) {
+  return error instanceof Error && error.message === getActionTimeoutMessage(action)
+}
+
+function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardViewModel {
+  const transition = getServiceTransition(service.id)
+  const isTransitioning = transition.phase !== 'idle'
+  const recent = isRecentTransition(transition)
+
+  let visualState: ServiceVisualState = service.running ? 'running' : 'stopped'
+  let badgeType: ServiceBadgeType = service.running ? 'success' : 'error'
+  let badgeLabel = service.running ? '\u8fd0\u884c\u4e2d' : '\u4e0d\u53ef\u7528'
+  let stateHeadline = service.running ? '\u7a33\u5b9a\u8fd0\u884c' : '\u7b49\u5f85\u542f\u52a8'
+  let statusDetail = service.detail
+  let recommendation = service.running ? '\u53ef\u76f4\u63a5\u6253\u5f00\u6216\u91cd\u542f' : '\u5efa\u8bae\u5148\u542f\u52a8\u6216\u91cd\u542f'
+  const diagnosis = runtimeDiagnosis.value
+  const elapsedMs = getTransitionElapsedMs(transition)
+  let durationLabel = `\u8037\u65f6\uff1a${formatDuration(elapsedMs)}`
+  let timeoutHint = `\u8d85\u65f6\u9608\u503c\uff1a${serviceActionTimeoutLabel.value}`
+
+  if (transition.phase === 'starting') {
+    visualState = 'starting'
+    badgeType = 'warning'
+    badgeLabel = '\u542f\u52a8\u4e2d'
+    stateHeadline = '\u8fdb\u7a0b\u62c9\u8d77\u4e2d'
+    statusDetail = '\u5df2\u53d1\u8d77\u542f\u52a8\u8bf7\u6c42\uff0c\u6b63\u5728\u7b49\u5f85\u672c\u5730\u670d\u52a1\u5c31\u7eea\u5e76\u8fd4\u56de\u8bbf\u95ee\u5730\u5740\u3002'
+    recommendation = '\u8bf7\u7b49\u5f85\u542f\u52a8\u5b8c\u6210\uff0c\u671f\u95f4\u4e0d\u8981\u91cd\u590d\u70b9\u51fb\u542f\u52a8\u3002'
+  } else if (transition.phase === 'stopping') {
+    visualState = 'stopping'
+    badgeType = 'warning'
+    badgeLabel = '\u505c\u6b62\u4e2d'
+    stateHeadline = '\u6b63\u5728\u91ca\u653e\u7aef\u53e3'
+    statusDetail = '\u5df2\u53d1\u8d77\u505c\u6b62\u8bf7\u6c42\uff0c\u6b63\u5728\u7ec8\u6b62\u672c\u5730\u8fdb\u7a0b\u5e76\u56de\u6536\u76d1\u542c\u7aef\u53e3\u3002'
+    recommendation = '\u8bf7\u7b49\u5f85\u505c\u6b62\u5b8c\u6210\uff0c\u4e4b\u540e\u53ef\u91cd\u65b0\u542f\u52a8\u670d\u52a1\u3002'
+  } else if (transition.phase === 'restarting') {
+    visualState = 'restarting'
+    badgeType = 'info'
+    badgeLabel = '\u91cd\u542f\u4e2d'
+    stateHeadline = '\u505c\u6b62\u540e\u91cd\u65b0\u62c9\u8d77'
+    statusDetail = '\u670d\u52a1\u6b63\u5728\u6267\u884c\u91cd\u542f\u6d41\u7a0b\uff1a\u5148\u505c\u6b62\u65e7\u8fdb\u7a0b\uff0c\u518d\u542f\u52a8\u65b0\u8fdb\u7a0b\u3002'
+    recommendation = '\u91cd\u542f\u671f\u95f4\u6d4f\u89c8\u5668\u5165\u53e3\u53ef\u80fd\u77ed\u6682\u4e0d\u53ef\u7528\uff0c\u8bf7\u7a0d\u5019\u3002'
+  } else if (recent && transition.lastOutcome === 'timeout' && transition.lastAction) {
+    if (didActionReachDesiredState(transition.lastAction, service.running)) {
+      visualState = 'recovering'
+      badgeType = 'success'
+      badgeLabel = '\u8d85\u65f6\u540e\u6062\u590d'
+      stateHeadline = '\u72b6\u6001\u5df2\u8ffd\u4e0a'
+      statusDetail = '\u672c\u6b21\u64cd\u4f5c\u867d\u7136\u8d85\u65f6\uff0c\u4f46\u670d\u52a1\u76ee\u524d\u5df2\u8fbe\u5230\u9884\u671f\u72b6\u6001\u3002'
+      recommendation = '\u5efa\u8bae\u7ee7\u7eed\u89c2\u5bdf\u65e5\u5fd7\uff0c\u786e\u8ba4\u540e\u7eed\u4e0d\u518d\u51fa\u73b0\u963b\u585e\u6216\u5361\u4f4f\u3002'
+    } else if (transition.lastAction === 'stop') {
+      visualState = 'stop_timeout'
+      badgeType = 'warning'
+      badgeLabel = '\u505c\u6b62\u8d85\u65f6'
+      stateHeadline = '\u672a\u80fd\u5728\u9884\u671f\u5185\u505c\u4e0b'
+      statusDetail = transition.message || getActionTimeoutMessage(transition.lastAction)
+      recommendation = '\u5efa\u8bae\u5148\u67e5\u770b\u662f\u5426\u6709\u5b50\u8fdb\u7a0b\u5360\u7528\uff0c\u518d\u91cd\u8bd5\u505c\u6b62\u6216\u6267\u884c\u91cd\u542f\u3002'
+    } else {
+      visualState = 'start_timeout'
+      badgeType = 'warning'
+      badgeLabel = transition.lastAction === 'restart' ? '\u91cd\u542f\u8d85\u65f6' : '\u542f\u52a8\u8d85\u65f6'
+      stateHeadline = transition.lastAction === 'restart' ? '\u91cd\u65b0\u62c9\u8d77\u8d85\u51fa\u9884\u671f' : '\u670d\u52a1\u5c31\u7eea\u8017\u65f6\u8fc7\u957f'
+      statusDetail = transition.message || getActionTimeoutMessage(transition.lastAction)
+      recommendation = '\u5efa\u8bae\u5148\u67e5\u770b\u542f\u52a8\u65e5\u5fd7\u4e0e\u7aef\u53e3\u5360\u7528\uff0c\u786e\u8ba4\u540e\u518d\u91cd\u8bd5\u3002'
+    }
+  } else if (!service.running && diagnosis?.failure_reason === 'port_occupied') {
+    visualState = 'failed'
+    badgeType = 'warning'
+    badgeLabel = '\u7aef\u53e3\u88ab\u5360\u7528'
+    stateHeadline = '\u68c0\u6d4b\u5230\u7aef\u53e3\u51b2\u7a81'
+    statusDetail = diagnosis.summary
+    recommendation = '\u5efa\u8bae\u91ca\u653e\u5360\u7528\u7aef\u53e3\u7684\u5176\u4ed6\u8fdb\u7a0b\uff0c\u7136\u540e\u91cd\u8bd5\u542f\u52a8\u3002'
+  } else if (!service.running && diagnosis?.failure_reason === 'process_not_listening') {
+    visualState = 'failed'
+    badgeType = 'error'
+    badgeLabel = '\u8fdb\u7a0b\u672a\u5c31\u7eea'
+    stateHeadline = '\u5b50\u8fdb\u7a0b\u4ecd\u5728\u4f46\u672a\u76d1\u542c'
+    statusDetail = diagnosis.summary
+    recommendation = '\u5efa\u8bae\u67e5\u770b\u542f\u52a8\u65e5\u5fd7\uff0c\u5fc5\u8981\u65f6\u5148\u505c\u6b62\u518d\u91cd\u542f\u670d\u52a1\u3002'
+  } else if (service.running && diagnosis?.failure_reason === 'health_check_failed') {
+    visualState = 'failed'
+    badgeType = 'warning'
+    badgeLabel = '\u5065\u5eb7\u68c0\u67e5\u672a\u901a\u8fc7'
+    stateHeadline = '\u7aef\u53e3\u5df2\u76d1\u542c\u4f46\u670d\u52a1\u672a\u5c31\u7eea'
+    statusDetail = diagnosis.summary
+    recommendation = '\u5efa\u8bae\u7b49\u5f85\u77ed\u6682\u6062\u590d\uff0c\u5982\u4ecd\u5931\u8d25\u5219\u67e5\u770b\u5065\u5eb7\u68c0\u67e5\u4e0e\u65e5\u5fd7\u3002'
+  } else if (recent && transition.lastOutcome === 'error') {
+    visualState = 'failed'
+    badgeType = 'error'
+    badgeLabel = '\u64cd\u4f5c\u5931\u8d25'
+    stateHeadline = '\u9700\u8981\u4eba\u5de5\u5904\u7406'
+    statusDetail = transition.message || '\u6700\u8fd1\u4e00\u6b21\u670d\u52a1\u64cd\u4f5c\u5931\u8d25\uff0c\u8bf7\u67e5\u770b\u65e5\u5fd7\u9762\u677f\u5b9a\u4f4d\u539f\u56e0\u3002'
+    recommendation = '\u5efa\u8bae\u5148\u67e5\u770b ERROR \u65e5\u5fd7\uff0c\u518d\u51b3\u5b9a\u91cd\u8bd5\u542f\u52a8\u8fd8\u662f\u91cd\u542f\u3002'
+  } else if (recent && transition.lastOutcome === 'success' && transition.lastAction) {
+    visualState = 'recovering'
+    badgeType = service.running ? 'success' : 'default'
+    badgeLabel = transition.lastAction === 'start' ? '\u5df2\u542f\u52a8' : transition.lastAction === 'stop' ? '\u5df2\u505c\u6b62' : '\u5df2\u91cd\u542f'
+    stateHeadline = transition.lastAction === 'start' ? '\u521a\u5b8c\u6210\u542f\u52a8' : transition.lastAction === 'stop' ? '\u521a\u5b8c\u6210\u505c\u6b62' : '\u521a\u5b8c\u6210\u91cd\u542f'
+    statusDetail = transition.message || service.detail
+    recommendation = service.running ? '\u5efa\u8bae\u89c2\u5bdf\u51e0\u79d2\u5e76\u5173\u6ce8\u65e5\u5fd7\u662f\u5426\u7ee7\u7eed\u62a5\u9519\u3002' : '\u5f53\u524d\u53ef\u4fdd\u6301\u505c\u6b62\u72b6\u6001\uff0c\u6216\u6309\u9700\u91cd\u65b0\u542f\u52a8\u3002'
+  }
+
+  return {
+    ...service,
+    visualState,
+    badgeType,
+    badgeLabel,
+    stateHeadline,
+    statusDetail,
+    recommendation,
+    durationLabel,
+    timeoutHint,
+    indicatorClass: [
+      `service-indicator--${visualState}`,
+      ...(isTransitioning ? ['service-indicator--pulse'] : []),
+    ],
+    isTransitioning,
+    canStart: !isTransitioning && !service.running,
+    canStop: !isTransitioning && service.running,
+    canRestart: !isTransitioning,
+  }
+}
+
+async function scrollLogToBottom() {
+  await nextTick()
+  if (logViewerRef.value) {
+    logViewerRef.value.scrollTop = logViewerRef.value.scrollHeight
+  }
+}
+
+async function refreshDashboard(showToast = false) {
   loading.value = true
   try {
-    const novels = await novelApi.listNovels()
-    books.value = novels.map((novel: NovelDTO) => ({
-      slug: novel.id,
-      title: novel.title,
-      stage: novel.stage,
-      stage_label: getStageLabel(novel.stage),
-      genre: '',
-      chapter_count: novel.chapters?.length || 0,
-      word_count: novel.total_word_count,
-    }))
-  } catch {
-    message.error('加载失败')
+    const [logData, overviewData, healthData, envData, diagnosisData] = await Promise.all([
+      servicesApi.getRuntimeLogs(200),
+      servicesApi.getOverview(),
+      servicesApi.getHealthPayload(),
+      servicesApi.getEnvironmentInfo(),
+      servicesApi.diagnoseRuntime(),
+    ])
+    runtimeLogs.value = logData
+    overview.value = overviewData
+    healthPayload.value = healthData
+    environmentInfo.value = envData
+    runtimeDiagnosis.value = diagnosisData
+    lastRefreshAt.value = new Date()
+
+    if (logAutoTailEnabled.value) {
+      void scrollLogToBottom()
+    }
+
+    if (showToast) {
+      message.success('服务状态已刷新')
+    }
+  } catch (error) {
+    console.error(error)
+    pushLog('error', '刷新失败', '获取服务状态失败，请稍后重试。')
+    message.error('获取服务状态失败')
   } finally {
     loading.value = false
   }
 }
 
-const getStageLabel = (stage: string): string => {
-  const labels: Record<string, string> = {
-    planning: '规划中',
-    writing: '写作中',
-    reviewing: '审稿中',
-    completed: '已完成',
-  }
-  return labels[stage] || stage
-}
-
-const formatWordCount = (count: number): string => {
-  if (count >= 10000) {
-    return (count / 10000).toFixed(1) + '万字'
-  }
-  return count + '字'
-}
-
-const handleCreate = async () => {
-  if (!newBook.value.premise.trim()) {
-    message.warning('请输入核心梗概')
-    return
-  }
-  if (!newBook.value.genre) {
-    message.warning('请选择赛道 / 类型')
-    return
-  }
-  if (!newBook.value.worldPreset) {
-    message.warning('请选择世界观基调')
-    return
-  }
-
-  creating.value = true
-  try {
-    const title = newBook.value.title || newBook.value.premise.substring(0, 20)
-    const novelId = `novel-${Date.now()}`
-
-    const base = {
-      novel_id: novelId,
-      title: title,
-      author: '作者',
-      premise: newBook.value.premise.trim(),
-      genre: newBook.value.genre,
-      world_preset: newBook.value.worldPreset,
-    }
-    const result = await novelApi.createNovel(
-      showAdvanced.value
-        ? {
-            ...base,
-            target_chapters: newBook.value.chapters || 100,
-            target_words_per_chapter: newBook.value.words || 2500,
-          }
-        : {
-            ...base,
-            length_tier: lengthTier.value,
-            target_chapters: 0,
-          }
-    )
-    message.success('创建成功')
-
-    setupWizard.value = {
-      novelId: result.id,
-      targetChapters: result.target_chapters,
-    }
-  } catch (error: any) {
-    message.error(error.response?.data?.detail || '创建失败')
-  } finally {
-    creating.value = false
-  }
-}
-
-const handleSetupComplete = () => {
-  const id = setupWizard.value?.novelId
-  setupWizard.value = null
-  if (id) router.push(`/book/${id}/workbench`)
-}
-
-const handleSetupSkip = () => {
-  const id = setupWizard.value?.novelId
-  setupWizard.value = null
-  if (id) router.push(`/book/${id}/workbench`)
-}
-
-const navigateToBook = (slug: string) => {
-  router.push(`/book/${slug}/workbench`)
-}
-
-const handleDeleteBook = async (slug: string) => {
-  deletingSlug.value = slug
-  try {
-    await novelApi.deleteNovel(slug)
-    message.success('书目已删除')
-    books.value = books.value.filter(b => b.slug !== slug)
-    selectedBooks.value = selectedBooks.value.filter(s => s !== slug)
-    await statsStore.loadGlobalStats(true)
-  } catch (error: any) {
-    const detail = error?.response?.data?.detail
-    message.error(typeof detail === 'string' ? detail : '删除失败')
-  } finally {
-    deletingSlug.value = null
-  }
-}
-
-const toggleBookSelection = (slug: string, selected: boolean) => {
-  if (selected) {
-    if (!selectedBooks.value.includes(slug)) {
-      selectedBooks.value.push(slug)
-    }
-  } else {
-    selectedBooks.value = selectedBooks.value.filter(s => s !== slug)
-  }
-}
-
-const toggleSelectAll = (checked: boolean) => {
-  if (checked) {
-    selectedBooks.value = filteredBooks.value.map(b => b.slug)
-  } else {
-    selectedBooks.value = []
-  }
-}
-
-const handleBatchDelete = async () => {
-  batchDeleting.value = true
-  try {
-    let successCount = 0
-    let failCount = 0
-    
-    for (const slug of selectedBooks.value) {
-      try {
-        await novelApi.deleteNovel(slug)
-        successCount++
-      } catch {
-        failCount++
-      }
-    }
-    
-    if (successCount > 0) {
-      message.success(`成功删除 ${successCount} 本书目`)
-      books.value = books.value.filter(b => !selectedBooks.value.includes(b.slug))
-      selectedBooks.value = []
-      await statsStore.loadGlobalStats(true)
-    }
-    if (failCount > 0) {
-      message.warning(`${failCount} 本删除失败`)
-    }
-    showBatchDeleteConfirm.value = false
-  } finally {
-    batchDeleting.value = false
-  }
-}
-
-const focusCreateInput = () => {
-  nextTick(() => {
-    createInputRef.value?.focus()
+async function runServiceAction(action: ServiceAction, serviceId: ServiceId) {
+  activeAction.value = { action, serviceId }
+  setServiceTransition(serviceId, {
+    phase: action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting',
+    lastAction: action,
+    lastOutcome: null,
+    message: '',
+    startedAt: Date.now(),
+    durationMs: null,
   })
-  // Scroll to top
-  window.scrollTo({ top: 0, behavior: 'smooth' })
-}
-
-const handleRefreshList = async () => {
-  await fetchBooks()
-  message.success('列表已刷新')
-}
-
-const getStageType = (stage: string) => {
-  const map: Record<string, string> = {
-    planning: 'info',
-    writing: 'warning',
-    reviewing: 'default',
-    completed: 'success',
+  try {
+    const result = await runServiceActionWithTimeout(action, serviceId)
+    const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'
+    setServiceTransition(serviceId, {
+      phase: 'idle',
+      lastAction: action,
+      lastOutcome: 'success',
+      message: result.message,
+      durationMs: Date.now() - (getServiceTransition(serviceId).startedAt || Date.now()),
+    })
+    pushLog('success', `${actionLabel} ${serviceId}`, `${result.message}${result.url ? `：${result.url}` : ''}`)
+    message.success(result.message)
+    await refreshDashboard()
+  } catch (error) {
+    console.error(error)
+    const text = error instanceof Error ? error.message : '服务控制失败'
+    setServiceTransition(serviceId, {
+      phase: 'idle',
+      lastAction: action,
+      lastOutcome: isActionTimeoutError(action, error) ? 'timeout' : 'error',
+      message: text,
+      durationMs: Date.now() - (getServiceTransition(serviceId).startedAt || Date.now()),
+    })
+    pushLog(isActionTimeoutError(action, error) ? 'warning' : 'error', `${serviceId} \u64cd\u4f5c\u5931\u8d25`, text)
+    isActionTimeoutError(action, error) ? message.warning(text) : message.error(text)
+  } finally {
+    activeAction.value = null
   }
-  return map[stage] || 'default'
+}
+
+async function openWebPortal() {
+  if (!webPortalUrl.value) {
+    message.warning('浏览器入口尚未就绪')
+    return
+  }
+  await servicesApi.openUrl(webPortalUrl.value)
+  pushLog('info', '打开浏览器入口', `已请求打开 ${webPortalUrl.value}`)
+}
+
+function stopPolling() {
+  if (pollTimer.value !== null) {
+    window.clearInterval(pollTimer.value)
+    pollTimer.value = null
+  }
+}
+
+function stopLogTailPolling() {
+  if (logTailTimer.value !== null) {
+    window.clearInterval(logTailTimer.value)
+    logTailTimer.value = null
+  }
+}
+
+function stopTransitionClock() {
+  if (transitionClockTimer.value !== null) {
+    window.clearInterval(transitionClockTimer.value)
+    transitionClockTimer.value = null
+  }
+}
+
+function startTransitionClock() {
+  stopTransitionClock()
+  transitionClock.value = Date.now()
+  transitionClockTimer.value = window.setInterval(() => {
+    transitionClock.value = Date.now()
+  }, 1000)
+}
+
+function startPolling() {
+  stopPolling()
+  if (!autoRefreshEnabled.value) return
+  pollTimer.value = window.setInterval(() => {
+    void refreshDashboard()
+  }, AUTO_REFRESH_INTERVAL)
+}
+
+function startLogTailPolling() {
+  stopLogTailPolling()
+  if (!logAutoTailEnabled.value) return
+  logTailTimer.value = window.setInterval(() => {
+    void refreshDashboard()
+  }, 3000)
+}
+
+function toggleAutoRefresh() {
+  autoRefreshEnabled.value = !autoRefreshEnabled.value
+  if (autoRefreshEnabled.value) {
+    startPolling()
+    pushLog('info', '自动巡检已开启', `控制台将每 ${AUTO_REFRESH_INTERVAL / 1000} 秒刷新一次状态。`)
+  } else {
+    stopPolling()
+    pushLog('warning', '自动巡检已关闭', '当前改为手动刷新模式。')
+  }
+}
+
+function toggleLogAutoTail() {
+  logAutoTailEnabled.value = !logAutoTailEnabled.value
+  if (logAutoTailEnabled.value) {
+    startLogTailPolling()
+    void scrollLogToBottom()
+    pushLog('info', '日志追尾已开启', '日志面板将每 3 秒自动刷新并滚动到底部。')
+  } else {
+    stopLogTailPolling()
+    pushLog('warning', '日志追尾已关闭', '日志面板改为手动刷新模式。')
+  }
 }
 
 onMounted(() => {
-  fetchBooks()
+  serviceActionTimeoutSeconds.value = loadTimeoutSecondsPreference()
+  void refreshDashboard()
+  startPolling()
+  startLogTailPolling()
+  startTransitionClock()
+  pushLog('info', '控制台已启动', '本地服务控制台已就绪。')
+})
+
+onBeforeUnmount(() => {
+  stopPolling()
+  stopLogTailPolling()
+  stopTransitionClock()
 })
 </script>
 
 <style scoped>
-.home {
-  display: flex;
+.service-console {
+  position: relative;
   min-height: 100vh;
-  height: 100vh;
+  padding: 32px;
+  background: var(--app-page-bg);
   overflow: hidden;
 }
 
-.home-content {
-  flex: 1;
-  min-height: 0;
-  margin-left: 300px;
-  padding: 32px;
-  position: relative;
-  overflow-x: hidden;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  transition: margin-left 0.22s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.home-content.sidebar-collapsed {
-  margin-left: 52px;
-}
-
-/* 顶栏：与 StatsTopBar 同款渐变，AI 控制台 / 提示词广场 / 设置 */
-
-.home-bg {
+.service-console__bg {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 110% 80% at 50% -30%, var(--color-brand-light), transparent 55%),
-    radial-gradient(ellipse 60% 50% at 100% 20%, rgba(14, 165, 233, 0.12), transparent 45%),
-    radial-gradient(ellipse 50% 40% at 0% 60%, var(--color-gold-dim), transparent 50%),
-    linear-gradient(180deg, var(--app-page-bg) 0%, var(--app-surface-subtle) 45%, var(--app-page-bg) 100%);
-  z-index: 0;
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.16), transparent 35%),
+    radial-gradient(circle at top right, rgba(16, 185, 129, 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 55%);
+  pointer-events: none;
 }
 
-.container {
+.service-console__container {
   position: relative;
   z-index: 1;
-  max-width: 1200px;
+  max-width: 1320px;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.header {
-  text-align: center;
-  margin-bottom: 40px;
-  animation: fade-up 0.55s ease both;
+.hero-card,
+.service-card,
+.info-card {
+  background: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
 }
 
-.title {
-  font-size: clamp(2rem, 4vw, 2.5rem);
+.hero-card {
+  border-radius: 28px;
+  padding: 32px;
+}
+
+.hero-card__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 18px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--color-brand);
+  font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.hero-copy {
+  max-width: 760px;
+}
+
+.hero-card__title {
   margin: 0 0 12px;
-  letter-spacing: -0.03em;
+  font-size: clamp(32px, 4vw, 48px);
+  line-height: 1.05;
   color: var(--app-text-primary);
 }
 
-.subtitle {
-  font-size: 1.05rem;
+.hero-card__subtitle {
+  margin: 0;
   color: var(--app-text-secondary);
-  margin: 0;
-  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.75;
 }
 
-
-.create-card {
-  margin-bottom: 32px;
-  border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
-  animation: fade-up 0.55s ease 0.08s both;
-}
-
-.create-header {
+.hero-card__actions {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.create-title-wrap {
+.alert-strip {
+  margin-top: 20px;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.18);
 }
 
-.create-icon {
-  font-size: 20px;
+.alert-strip p {
+  margin: 4px 0 0;
+  color: var(--app-text-secondary);
 }
 
-.create-title {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.premise-input :deep(textarea) {
-  font-size: 15px;
-  line-height: 1.6;
-}
-
-.preset-row {
+.alert-strip__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #ef4444;
   margin-top: 4px;
 }
 
-.length-tier-block {
-  margin-top: 8px;
-  padding: 4px 0 4px;
+.hero-stats {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
 }
 
-.length-tier-label {
+.hero-stat {
+  padding: 18px 20px;
+  border-radius: 20px;
+  background: rgba(248, 250, 252, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hero-stat__label {
+  color: var(--app-text-muted);
   font-size: 13px;
-  color: var(--app-text-secondary);
+}
+
+.hero-stat__value {
+  color: var(--app-text-primary);
+  font-size: 18px;
+  word-break: break-all;
+}
+
+.grid-section,
+.details-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.grid-section {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.details-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+}
+
+.details-grid--bottom {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+}
+
+.service-card {
+  border-radius: 24px;
+  padding: 24px;
+}
+
+.service-card--down {
+  border-color: rgba(239, 68, 68, 0.22);
+}
+
+.service-card--transition {
+  border-color: rgba(59, 130, 246, 0.26);
+  box-shadow: 0 20px 50px rgba(37, 99, 235, 0.12);
+}
+
+.service-card__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.service-card__label-row,
+.section-headline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.service-card__label-row {
   margin-bottom: 10px;
 }
 
-.length-tier-space {
-  width: 100%;
-}
-
-.length-tier-group :deep(.n-radio) {
-  align-items: flex-start;
-}
-
-.length-tier-radio {
-  flex: 1 1 200px;
-  min-width: min(200px, 100%);
-}
-
-.length-tier-option-inner {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
-  max-width: 280px;
-}
-
-.length-tier-title {
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.length-tier-hint {
-  font-size: 12px;
-  color: var(--app-text-muted);
-  line-height: 1.45;
-}
-
-.advanced-settings {
-  padding: 16px;
-  background: rgba(79, 70, 229, 0.04);
-  border-radius: 12px;
-  border: 1px solid rgba(79, 70, 229, 0.1);
-}
-
-.w-full {
-  width: 100%;
-}
-
-.books-section {
-  background: var(--app-surface);
-  border-radius: 16px;
-  padding: 28px;
-  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04);
-  animation: fade-up 0.55s ease 0.14s both;
-}
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-
-.section-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.section-title {
+.service-card__title,
+.info-card__title {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
   color: var(--app-text-primary);
 }
 
-.book-count {
-  font-size: 13px;
-  color: var(--app-text-muted);
-  background: var(--app-surface-subtle);
-  padding: 4px 10px;
-  border-radius: 12px;
+.service-card__title {
+  font-size: 22px;
 }
 
-.section-right {
+.service-card__desc {
+  margin: 0;
+  color: var(--app-text-secondary);
+  line-height: 1.7;
+}
+
+.service-state-row {
+  margin-top: 12px;
   display: flex;
+  gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+}
+
+.service-state-row__label {
+  color: var(--app-text-muted);
+}
+
+.service-state-row__meta {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.service-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 8px rgba(34, 197, 94, 0.14);
+  margin-top: 8px;
+}
+
+.service-indicator--down {
+  background: #ef4444;
+  box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.12);
+}
+
+.service-indicator--running,
+.service-indicator--recovering {
+  background: #22c55e;
+  box-shadow: 0 0 0 8px rgba(34, 197, 94, 0.14);
+}
+
+.service-indicator--starting,
+.service-indicator--stopping {
+  background: #f59e0b;
+  box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.14);
+}
+
+.service-indicator--start_timeout,
+.service-indicator--stop_timeout {
+  background: #f97316;
+  box-shadow: 0 0 0 8px rgba(249, 115, 22, 0.16);
+}
+
+.service-indicator--restarting {
+  background: #3b82f6;
+  box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.14);
+}
+
+.service-indicator--stopped,
+.service-indicator--failed {
+  background: #ef4444;
+  box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.12);
+}
+
+.service-indicator--pulse {
+  animation: servicePulse 1.4s ease-in-out infinite;
+}
+
+.service-meta {
+  margin: 22px 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.search-input {
-  width: 240px;
+.service-meta__item,
+.env-item {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
-.selection-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
-  background: var(--app-surface-subtle);
-  border-radius: 10px;
-  margin-bottom: 20px;
+.service-meta__label,
+.env-item__label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--app-text-muted);
+  font-size: 12px;
 }
 
-.selection-hint {
+.service-meta__value,
+.env-item__value {
+  color: var(--app-text-primary);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.env-item__value--path {
   font-size: 13px;
-  color: var(--app-text-muted);
 }
 
-.loading-state,
-.empty-state,
-.no-results-state {
+.service-card__actions {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 72px 20px;
-  color: var(--app-text-muted);
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.loading-state p {
+.log-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.info-card {
+  border-radius: 24px;
+  padding: 24px;
+}
+
+.env-grid {
   margin-top: 16px;
-  font-size: 14px;
-}
-
-.empty-state {
-  gap: 16px;
-}
-
-.empty-illustration {
-  width: 100px;
-  height: 100px;
-  background: linear-gradient(135deg, var(--app-surface-subtle) 0%, var(--app-border) 100%);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.empty-icon {
-  font-size: 48px;
-}
-
-.empty-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--app-text-primary);
-}
-
-.empty-desc {
-  margin: 0;
-  font-size: 14px;
-  color: var(--app-text-muted);
-}
-
-.no-results-state {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.no-results-icon {
-  font-size: 40px;
+.env-item--wide {
+  grid-column: 1 / -1;
 }
 
-.no-results-state p {
-  margin: 0;
-  font-size: 14px;
-}
-
-/* ── 书目：单行横排，多本时横向滚动 ── */
-.books-list-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.books-grid {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  gap: 16px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 6px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-}
-
-/* 卡片（固定宽度，保证单行横滑） */
-.book-card {
-  position: relative;
-  flex: 0 0 auto;
-  width: 260px;
-  max-width: min(260px, 82vw);
-  display: flex;
-  flex-direction: column;
-  padding: 20px;
-  background: var(--app-surface);
-  border: 1px solid var(--app-border);
-  border-radius: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  animation: fade-up 0.35s ease both;
-  overflow: hidden;
-}
-
-.book-card:hover {
-  border-color: var(--color-brand, #4f46e5);
-  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.1);
-  transform: translateY(-2px);
-}
-
-.book-card.is-selected {
-  border-color: var(--color-brand, #4f46e5);
-  background: var(--color-brand-light, rgba(79, 70, 229, 0.04));
-}
-
-/* 阶段状态小圆点 */
-.book-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: inline-block;
-}
-
-.book-dot.dot-planning { background: #3b82f6; }
-.book-dot.dot-writing { background: #f59e0b; }
-.book-dot.dot-reviewing { background: #8b5cf6; }
-.book-dot.dot-completed { background: #10b981; }
-
-/* 卡片顶部：标题 + 圆点 */
-.card-top {
+.timeout-config__header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.book-card-title {
-  font-size: 15px;
-  font-weight: 650;
-  color: var(--app-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.3;
-}
-
-/* 卡片元信息行：标签 + 类型 */
-.card-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.meta-genre {
-  font-size: 12px;
-  color: var(--app-text-muted);
+.timeout-config__controls {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-/* 卡片统计信息 */
-.card-stats {
+.timeout-config__input {
+  width: 140px;
+}
+
+.timeout-config__presets {
   display: flex;
-  gap: 10px;
-  font-size: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.timeout-config__hint {
+  margin: 10px 0 0;
   color: var(--app-text-muted);
-  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.log-toolbar {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.log-toolbar__search {
+  max-width: 360px;
+}
+
+.log-toolbar__toggles,
+.log-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.log-badges {
+  margin-top: 14px;
+}
+
+.info-list {
+  margin: 16px 0 0;
+  padding-left: 20px;
+  color: var(--app-text-secondary);
+  line-height: 1.85;
+}
+
+.log-summary {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--app-text-muted);
+  font-size: 13px;
+}
+
+.log-viewer,
+.health-preview {
+  margin-top: 16px;
+  border-radius: 18px;
+  background: #0f172a;
+  overflow: auto;
+}
+
+.log-viewer {
+  min-height: 320px;
+  max-height: 520px;
+  padding: 14px;
+}
+
+.log-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.log-line {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.log-line--error {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+.log-line--warning {
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(120, 53, 15, 0.28);
+}
+
+.log-line--info {
+  border-color: rgba(96, 165, 250, 0.22);
+  background: rgba(30, 64, 175, 0.18);
+}
+
+.log-line__badge {
+  min-width: 54px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+.log-line__text {
+  color: #dbeafe;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
   flex: 1;
 }
 
-/* 卡片操作按钮 */
-.card-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  opacity: 0;
-  transition: opacity 0.18s ease;
-  padding-top: 4px;
-  border-top: 1px solid transparent;
-}
-
-.book-card:hover .card-actions {
-  opacity: 1;
-}
-
-/* 折叠提示栏 */
-.books-fold-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 12px;
-  padding: 12px 16px;
-  background: var(--color-brand-light, rgba(79, 70, 229, 0.05));
-  border: 1px dashed var(--color-brand-border, rgba(79, 70, 229, 0.2));
-  border-radius: 10px;
-}
-
-.fold-hint {
+.log-empty {
+  color: #94a3b8;
   font-size: 13px;
-  color: var(--app-text-secondary);
+  line-height: 1.7;
 }
 
-@keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.health-preview {
+  padding: 18px;
+  color: #dbeafe;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.65;
+  min-height: 260px;
 }
 
-/* Responsive */
-@media (max-width: 1200px) {
-  .home-content {
-    padding: 24px;
-  }
-
-
-}
-
-/* ── 底部版权 ──────────────────────────────── */
-.home-footer {
-  position: relative;
-  z-index: 1;
-  text-align: center;
-  padding: 28px 20px 32px;
-  margin-top: 40px;
-  border-top: 1px solid var(--app-border);
+.timeline-list {
+  margin-top: 16px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--app-text-muted);
-  line-height: 1.6;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.footer-brand {
-  font-weight: 700;
-  color: var(--color-gold);
-  letter-spacing: 0.03em;
-}
-
-.footer-sep {
-  opacity: 0.4;
-}
-
-.footer-sub {
-  font-weight: 600;
-  color: var(--color-gold-light);
-  opacity: 0.8;
-}
-
-.footer-text {
-  color: var(--app-text-muted);
-}
-
-.footer-link {
-  color: var(--color-gold);
-  text-decoration: none;
-  font-weight: 600;
-  border-bottom: 1px dashed var(--color-gold-border);
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.footer-link:hover {
-  color: var(--color-gold-light);
-  border-bottom-style: solid;
-  box-shadow: 0 0 8px var(--color-glow-gold);
-}
-
-@media (max-width: 768px) {
-  .home-content {
-    margin-left: 0;
-    padding: 16px;
-  }
-
-  .section-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .section-right {
-    flex-direction: column;
-  }
-  
-  .search-input {
-    width: 100%;
-  }
-
-  .card-actions {
-    opacity: 1; /* 移动端始终显示操作按钮 */
-  }
-}
-
-/* ── 查看全部书目弹窗样式 ── */
-.all-books-header {
+.timeline-item {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  gap: 12px;
+  align-items: flex-start;
 }
 
-.all-books-header-title {
-  font-size: 17px;
-  font-weight: 700;
+.timeline-item__marker {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  margin-top: 7px;
+  flex-shrink: 0;
+}
+
+.timeline-item__marker--info { background: #3b82f6; }
+.timeline-item__marker--success { background: #22c55e; }
+.timeline-item__marker--warning { background: #f59e0b; }
+.timeline-item__marker--error { background: #ef4444; }
+
+.timeline-item__content {
+  flex: 1;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.timeline-item__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
   color: var(--app-text-primary);
 }
 
-.all-books-body {
-  height: calc(80vh - 100px);
-  overflow-y: auto;
-  padding-right: 4px;
+.timeline-item__top span,
+.timeline-item__content p,
+.empty-inline {
+  color: var(--app-text-secondary);
 }
 
-.all-books-grid {
-  max-height: none;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
+@keyframes servicePulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.72;
+  }
+}
+
+.timeline-item__content p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.empty-inline {
+  margin-top: 16px;
+}
+
+@media (max-width: 1100px) {
+  .grid-section,
+  .details-grid,
+  .details-grid--bottom,
+  .hero-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-card__header {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 768px) {
+  .service-console {
+    padding: 16px;
+  }
+
+  .hero-card,
+  .service-card,
+  .info-card {
+    border-radius: 22px;
+    padding: 20px;
+  }
+
+  .service-meta,
+  .env-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .env-item--wide {
+    grid-column: auto;
+  }
+
+  .timeline-item__top {
+    flex-direction: column;
+  }
 }
 </style>

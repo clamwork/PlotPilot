@@ -6,9 +6,13 @@
 //!   - 重启后端
 //!   - 打开外部浏览器
 
-use crate::backend::BackendManager;
-use tauri::{Manager, State};
+use crate::backend::{BackendManager, RuntimeDiagnostic};
+use serde::Serialize;
+use std::collections::VecDeque;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
+use tauri::{Manager, State};
 
 /// 获取后端端口号（前端需要这个来构造 API 请求地址）
 #[tauri::command]
@@ -26,6 +30,47 @@ pub fn get_backend_status(
     Ok(BackendStatus {
         running: mgr.is_running(),
         port: mgr.get_port(),
+    })
+}
+
+#[tauri::command]
+pub fn get_service_overview(
+    manager: State<'_, Mutex<BackendManager>>,
+) -> Result<ServiceOverview, String> {
+    let mgr = manager.lock().map_err(|e| e.to_string())?;
+    let backend_running = mgr.is_running();
+    let backend_port = mgr.get_port();
+    let backend_origin = if backend_port > 0 {
+        Some(format!("http://127.0.0.1:{}", backend_port))
+    } else {
+        None
+    };
+
+    Ok(ServiceOverview {
+        backend: ManagedServiceStatus {
+            id: "backend".to_string(),
+            label: "Backend API".to_string(),
+            running: backend_running,
+            port: Some(backend_port),
+            url: backend_origin.clone().map(|origin| format!("{}/health", origin)),
+            detail: if backend_running {
+                "Python/FastAPI 服务已启动，可处理接口和任务调度。".to_string()
+            } else {
+                "后端未运行，浏览器端将无法访问核心功能。".to_string()
+            },
+        },
+        frontend: ManagedServiceStatus {
+            id: "frontend".to_string(),
+            label: "Web Portal".to_string(),
+            running: backend_running,
+            port: Some(backend_port),
+            url: backend_origin,
+            detail: if backend_running {
+                "浏览器访问入口已可用，首页由本地服务提供。".to_string()
+            } else {
+                "浏览器入口依赖本地服务，需先恢复后端。".to_string()
+            },
+        },
     })
 }
 
@@ -51,6 +96,95 @@ pub async fn restart_backend(
             Ok(new_port)
         }
         Err(e) => Err(e),
+    }
+}
+
+#[tauri::command]
+pub async fn restart_service(
+    service_id: String,
+    manager: State<'_, Mutex<BackendManager>>,
+    port_state: State<'_, Mutex<u16>>,
+) -> Result<ServiceActionResult, String> {
+    match service_id.as_str() {
+        "backend" | "frontend" => {
+            {
+                let mgr = manager.lock().map_err(|e| e.to_string())?;
+                mgr.terminate();
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            let mut mgr = manager.lock().map_err(|e| e.to_string())?;
+            let new_port = mgr.start_and_wait(120)?;
+            *port_state.lock().unwrap() = new_port;
+
+            Ok(ServiceActionResult {
+                service_id,
+                running: true,
+                port: Some(new_port),
+                url: Some(format!("http://127.0.0.1:{}", new_port)),
+                message: "服务已重启".to_string(),
+            })
+        }
+        other => Err(format!("不支持的服务: {}", other)),
+    }
+}
+
+#[tauri::command]
+pub async fn start_service(
+    service_id: String,
+    manager: State<'_, Mutex<BackendManager>>,
+    port_state: State<'_, Mutex<u16>>,
+) -> Result<ServiceActionResult, String> {
+    match service_id.as_str() {
+        "backend" | "frontend" => {
+            let mut mgr = manager.lock().map_err(|e| e.to_string())?;
+            if mgr.is_running() {
+                let port = mgr.get_port();
+                return Ok(ServiceActionResult {
+                    service_id,
+                    running: true,
+                    port: Some(port),
+                    url: Some(format!("http://127.0.0.1:{}", port)),
+                    message: "服务已在运行".to_string(),
+                });
+            }
+
+            let new_port = mgr.start_and_wait(120)?;
+            *port_state.lock().unwrap() = new_port;
+
+            Ok(ServiceActionResult {
+                service_id,
+                running: true,
+                port: Some(new_port),
+                url: Some(format!("http://127.0.0.1:{}", new_port)),
+                message: "服务已启动".to_string(),
+            })
+        }
+        other => Err(format!("不支持的服务: {}", other)),
+    }
+}
+
+#[tauri::command]
+pub fn stop_service(
+    service_id: String,
+    manager: State<'_, Mutex<BackendManager>>,
+    port_state: State<'_, Mutex<u16>>,
+) -> Result<ServiceActionResult, String> {
+    match service_id.as_str() {
+        "backend" | "frontend" => {
+            let mgr = manager.lock().map_err(|e| e.to_string())?;
+            mgr.terminate();
+            *port_state.lock().unwrap() = 0;
+
+            Ok(ServiceActionResult {
+                service_id,
+                running: false,
+                port: None,
+                url: None,
+                message: "服务已停止".to_string(),
+            })
+        }
+        other => Err(format!("不支持的服务: {}", other)),
     }
 }
 
@@ -146,11 +280,131 @@ pub fn extract_embedded_python(
     }
 }
 
+fn map_runtime_diagnosis(diag: RuntimeDiagnostic) -> ServiceRuntimeDiagnosis {
+    let failure_reason = if diag.process_running && !diag.port_listening {
+        Some("process_not_listening".to_string())
+    } else if !diag.process_running && diag.port_listening {
+        Some("port_occupied".to_string())
+    } else if diag.process_running && diag.port_listening && !diag.health_check_ok {
+        Some("health_check_failed".to_string())
+    } else {
+        None
+    };
+
+    let summary = match failure_reason.as_deref() {
+        Some("process_not_listening") => "?????????????????".to_string(),
+        Some("port_occupied") => "???????????????????????".to_string(),
+        Some("health_check_failed") => "??????????????".to_string(),
+        _ => "??????".to_string(),
+    };
+
+    ServiceRuntimeDiagnosis {
+        port: diag.port,
+        process_running: diag.process_running,
+        port_listening: diag.port_listening,
+        health_check_ok: diag.health_check_ok,
+        failure_reason,
+        summary,
+    }
+}
+
+#[tauri::command]
+pub fn diagnose_service_runtime(
+    manager: State<'_, Mutex<BackendManager>>,
+) -> Result<ServiceRuntimeDiagnosis, String> {
+    let mgr = manager.lock().map_err(|e| e.to_string())?;
+    Ok(map_runtime_diagnosis(mgr.diagnose_runtime_state()))
+}
+
+#[tauri::command]
+pub fn get_runtime_logs(
+    manager: State<'_, Mutex<BackendManager>>,
+    lines: Option<usize>,
+) -> Result<RuntimeLogSnapshot, String> {
+    let mgr = manager.lock().map_err(|e| e.to_string())?;
+    let log_path = mgr.resolve_runtime_log_file_path();
+    let requested_lines = lines.unwrap_or(200).clamp(20, 1000);
+
+    if !log_path.exists() {
+        return Ok(RuntimeLogSnapshot {
+            path: log_path.to_string_lossy().to_string(),
+            exists: false,
+            line_count: 0,
+            lines: vec![],
+        });
+    }
+
+    let file = File::open(&log_path)
+        .map_err(|e| format!("打开日志文件失败 {}: {}", log_path.display(), e))?;
+    let reader = BufReader::new(file);
+    let mut ring = VecDeque::with_capacity(requested_lines);
+    let mut total_count = 0usize;
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("读取日志文件失败 {}: {}", log_path.display(), e))?;
+        total_count += 1;
+        if ring.len() == requested_lines {
+            ring.pop_front();
+        }
+        ring.push_back(line);
+    }
+
+    Ok(RuntimeLogSnapshot {
+        path: log_path.to_string_lossy().to_string(),
+        exists: true,
+        line_count: total_count,
+        lines: ring.into_iter().collect(),
+    })
+}
+
 /// 后端状态返回结构
 #[derive(serde::Serialize, Clone)]
 pub struct BackendStatus {
     running: bool,
     port: u16,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ManagedServiceStatus {
+    id: String,
+    label: String,
+    running: bool,
+    port: Option<u16>,
+    url: Option<String>,
+    detail: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ServiceOverview {
+    backend: ManagedServiceStatus,
+    frontend: ManagedServiceStatus,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ServiceActionResult {
+    service_id: String,
+    running: bool,
+    port: Option<u16>,
+    url: Option<String>,
+    message: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ServiceRuntimeDiagnosis {
+    port: u16,
+    process_running: bool,
+    port_listening: bool,
+    health_check_ok: bool,
+    failure_reason: Option<String>,
+    summary: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct RuntimeLogSnapshot {
+    path: String,
+    exists: bool,
+    line_count: usize,
+    lines: Vec<String>,
 }
 
 /// 安装状态返回结构

@@ -107,11 +107,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_backend_port,
             commands::get_backend_status,
+            commands::get_service_overview,
             commands::restart_backend,
+            commands::start_service,
+            commands::stop_service,
+            commands::restart_service,
             commands::open_in_browser,
             commands::run_installation,
             commands::check_environment,
             commands::extract_embedded_python,
+            commands::diagnose_service_runtime,
+            commands::get_runtime_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PlotPilot");
