@@ -107,7 +107,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_backend_port,
             commands::get_backend_status,
+            commands::get_service_overview,
             commands::restart_backend,
+            commands::restart_service,
             commands::open_in_browser,
             commands::run_installation,
             commands::check_environment,

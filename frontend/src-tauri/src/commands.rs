@@ -7,8 +7,9 @@
 //!   - 打开外部浏览器
 
 use crate::backend::BackendManager;
-use tauri::{Manager, State};
+use serde::Serialize;
 use std::sync::Mutex;
+use tauri::{Manager, State};
 
 /// 获取后端端口号（前端需要这个来构造 API 请求地址）
 #[tauri::command]
@@ -26,6 +27,47 @@ pub fn get_backend_status(
     Ok(BackendStatus {
         running: mgr.is_running(),
         port: mgr.get_port(),
+    })
+}
+
+#[tauri::command]
+pub fn get_service_overview(
+    manager: State<'_, Mutex<BackendManager>>,
+) -> Result<ServiceOverview, String> {
+    let mgr = manager.lock().map_err(|e| e.to_string())?;
+    let backend_running = mgr.is_running();
+    let backend_port = mgr.get_port();
+    let backend_origin = if backend_port > 0 {
+        Some(format!("http://127.0.0.1:{}", backend_port))
+    } else {
+        None
+    };
+
+    Ok(ServiceOverview {
+        backend: ManagedServiceStatus {
+            id: "backend".to_string(),
+            label: "Backend API".to_string(),
+            running: backend_running,
+            port: Some(backend_port),
+            url: backend_origin.clone().map(|origin| format!("{}/health", origin)),
+            detail: if backend_running {
+                "Python/FastAPI 服务已启动，可处理接口和任务调度。".to_string()
+            } else {
+                "后端未运行，浏览器端将无法访问核心功能。".to_string()
+            },
+        },
+        frontend: ManagedServiceStatus {
+            id: "frontend".to_string(),
+            label: "Web Portal".to_string(),
+            running: backend_running,
+            port: Some(backend_port),
+            url: backend_origin,
+            detail: if backend_running {
+                "浏览器访问入口已可用，首页由本地服务提供。".to_string()
+            } else {
+                "浏览器入口依赖本地服务，需先恢复后端。".to_string()
+            },
+        },
     })
 }
 
@@ -51,6 +93,36 @@ pub async fn restart_backend(
             Ok(new_port)
         }
         Err(e) => Err(e),
+    }
+}
+
+#[tauri::command]
+pub async fn restart_service(
+    service_id: String,
+    manager: State<'_, Mutex<BackendManager>>,
+    port_state: State<'_, Mutex<u16>>,
+) -> Result<ServiceActionResult, String> {
+    match service_id.as_str() {
+        "backend" | "frontend" => {
+            {
+                let mgr = manager.lock().map_err(|e| e.to_string())?;
+                mgr.terminate();
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            let mut mgr = manager.lock().map_err(|e| e.to_string())?;
+            let new_port = mgr.start_and_wait(120)?;
+            *port_state.lock().unwrap() = new_port;
+
+            Ok(ServiceActionResult {
+                service_id,
+                running: true,
+                port: Some(new_port),
+                url: Some(format!("http://127.0.0.1:{}", new_port)),
+                message: "服务已重启".to_string(),
+            })
+        }
+        other => Err(format!("不支持的服务: {}", other)),
     }
 }
 
@@ -151,6 +223,31 @@ pub fn extract_embedded_python(
 pub struct BackendStatus {
     running: bool,
     port: u16,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ManagedServiceStatus {
+    id: String,
+    label: String,
+    running: bool,
+    port: Option<u16>,
+    url: Option<String>,
+    detail: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ServiceOverview {
+    backend: ManagedServiceStatus,
+    frontend: ManagedServiceStatus,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ServiceActionResult {
+    service_id: String,
+    running: bool,
+    port: Option<u16>,
+    url: Option<String>,
+    message: String,
 }
 
 /// 安装状态返回结构
