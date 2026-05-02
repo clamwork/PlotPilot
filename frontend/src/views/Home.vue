@@ -4,18 +4,26 @@
 
     <main class="service-console__container">
       <section class="hero-card">
-        <div class="hero-card__eyebrow">PlotPilot Service Console</div>
+        <div class="hero-card__eyebrow">PlotPilot Local Runtime</div>
         <div class="hero-card__header">
-          <div>
-            <h1 class="hero-card__title">把桌面端改成服务控制台</h1>
+          <div class="hero-copy">
+            <h1 class="hero-card__title">本地服务控制台</h1>
             <p class="hero-card__subtitle">
-              桌面应用只负责管理本地服务：查看状态、重启异常服务、打开浏览器入口。
-              实际业务界面继续通过浏览器访问，减少“壳已打开但服务已崩”的不可操作状态。
+              桌面壳只负责守护本地运行环境。你可以在这里查看服务状态、执行启动/停止/重启，
+              再通过浏览器进入实际业务界面。
             </p>
           </div>
+
           <div class="hero-card__actions">
-            <n-button secondary strong @click="refreshOverview" :loading="loading">
-              刷新状态
+            <n-button secondary strong @click="refreshDashboard" :loading="loading">
+              立即刷新
+            </n-button>
+            <n-button
+              strong
+              :type="autoRefreshEnabled ? 'success' : 'default'"
+              @click="toggleAutoRefresh"
+            >
+              {{ autoRefreshEnabled ? '自动巡检中' : '开启自动巡检' }}
             </n-button>
             <n-button
               type="primary"
@@ -25,6 +33,14 @@
             >
               打开浏览器入口
             </n-button>
+          </div>
+        </div>
+
+        <div v-if="hasServiceIssue" class="alert-strip">
+          <div class="alert-strip__dot" />
+          <div>
+            <strong>发现本地服务异常</strong>
+            <p>至少有一个关键服务不可用。可直接在下方执行启动或重启。</p>
           </div>
         </div>
 
@@ -38,8 +54,12 @@
             <strong class="hero-stat__value">{{ webPortalUrl || '等待服务' }}</strong>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat__label">异常恢复方式</span>
-            <strong class="hero-stat__value">一键重启本地服务</strong>
+            <span class="hero-stat__label">上次巡检</span>
+            <strong class="hero-stat__value">{{ lastRefreshText }}</strong>
+          </div>
+          <div class="hero-stat">
+            <span class="hero-stat__label">巡检模式</span>
+            <strong class="hero-stat__value">{{ autoRefreshEnabled ? '每 8 秒自动轮询' : '手动刷新' }}</strong>
           </div>
         </div>
       </section>
@@ -78,16 +98,42 @@
               <span class="service-meta__label">监听端口</span>
               <span class="service-meta__value">{{ service.port ?? '—' }}</span>
             </div>
+            <div class="service-meta__item">
+              <span class="service-meta__label">建议动作</span>
+              <span class="service-meta__value">{{ service.running ? '可直接打开或重启' : '建议先启动或重启' }}</span>
+            </div>
+            <div class="service-meta__item">
+              <span class="service-meta__label">依赖关系</span>
+              <span class="service-meta__value">{{ service.id === 'frontend' ? '依赖后端 HTTP 服务' : '核心本地 API 进程' }}</span>
+            </div>
           </div>
 
           <div class="service-card__actions">
             <n-button
+              type="success"
+              secondary
+              :loading="activeAction?.serviceId === service.id && activeAction?.action === 'start'"
+              :disabled="service.running"
+              @click="runServiceAction('start', service.id)"
+            >
+              启动
+            </n-button>
+            <n-button
+              type="warning"
+              secondary
+              :loading="activeAction?.serviceId === service.id && activeAction?.action === 'stop'"
+              :disabled="!service.running"
+              @click="runServiceAction('stop', service.id)"
+            >
+              停止
+            </n-button>
+            <n-button
               type="primary"
               secondary
-              :loading="restartingServiceId === service.id"
-              @click="handleRestart(service.id)"
+              :loading="activeAction?.serviceId === service.id && activeAction?.action === 'restart'"
+              @click="runServiceAction('restart', service.id)"
             >
-              重启{{ service.label }}
+              重启
             </n-button>
             <n-button
               quaternary
@@ -102,17 +148,69 @@
 
       <section class="details-grid">
         <article class="info-card">
-          <h3 class="info-card__title">推荐运行方式</h3>
-          <ul class="info-list">
-            <li>桌面端只做本地守护与配置，不再承担完整业务 UI。</li>
-            <li>后端异常时，先在这里查看状态，再一键重启。</li>
-            <li>前端业务继续通过默认浏览器访问，便于调试和恢复。</li>
-          </ul>
+          <div class="section-headline">
+            <h3 class="info-card__title">运行环境</h3>
+            <n-tag size="small" :bordered="false" type="info">桌面壳侧</n-tag>
+          </div>
+          <div class="env-grid">
+            <div class="env-item">
+              <span class="env-item__label">Python 可用</span>
+              <strong class="env-item__value">{{ environmentInfo?.python_available ? '是' : '否 / 未知' }}</strong>
+            </div>
+            <div class="env-item">
+              <span class="env-item__label">内嵌 Python 包</span>
+              <strong class="env-item__value">{{ environmentInfo?.has_embedded_python ? '已提供' : '未检测到' }}</strong>
+            </div>
+            <div class="env-item env-item--wide">
+              <span class="env-item__label">项目根目录</span>
+              <strong class="env-item__value env-item__value--path">{{ environmentInfo?.project_root || '未获取到' }}</strong>
+            </div>
+          </div>
         </article>
 
         <article class="info-card">
-          <h3 class="info-card__title">当前健康信息</h3>
+          <div class="section-headline">
+            <h3 class="info-card__title">后端健康信息</h3>
+            <n-tag size="small" :bordered="false" :type="healthPayload ? 'success' : 'default'">
+              {{ healthPayload ? '已获取' : '暂无数据' }}
+            </n-tag>
+          </div>
           <pre class="health-preview">{{ healthPreview }}</pre>
+        </article>
+      </section>
+
+      <section class="details-grid details-grid--bottom">
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">最近操作记录</h3>
+            <n-tag size="small" :bordered="false" type="default">{{ actionLogs.length }} 条</n-tag>
+          </div>
+          <div v-if="actionLogs.length" class="timeline-list">
+            <div v-for="log in actionLogs" :key="log.id" class="timeline-item">
+              <div class="timeline-item__marker" :class="`timeline-item__marker--${log.level}`" />
+              <div class="timeline-item__content">
+                <div class="timeline-item__top">
+                  <strong>{{ log.title }}</strong>
+                  <span>{{ log.time }}</span>
+                </div>
+                <p>{{ log.message }}</p>
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-inline">暂无操作记录。</div>
+        </article>
+
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">建议运维流程</h3>
+            <n-tag size="small" :bordered="false" type="success">推荐</n-tag>
+          </div>
+          <ul class="info-list">
+            <li>先观察状态灯与健康信息，再决定执行启动、停止或重启。</li>
+            <li>如果浏览器入口失效，优先重启 Backend API，再重新打开入口。</li>
+            <li>开启自动巡检后，控制台会持续轮询并展示最新状态。</li>
+            <li>业务页面仍在浏览器中访问，桌面端只承担本地运维职责。</li>
+          </ul>
         </article>
       </section>
     </main>
@@ -120,15 +218,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { servicesApi, type ManagedServiceStatus, type ServiceOverview } from '../api/services'
+import {
+  servicesApi,
+  type EnvironmentInfo,
+  type ManagedServiceStatus,
+  type ServiceAction,
+  type ServiceId,
+  type ServiceOverview,
+} from '../api/services'
+
+interface ActionLogItem {
+  id: number
+  title: string
+  message: string
+  time: string
+  level: 'info' | 'success' | 'warning' | 'error'
+}
+
+const AUTO_REFRESH_INTERVAL = 8000
 
 const message = useMessage()
 const loading = ref(false)
-const restartingServiceId = ref<string | null>(null)
+const autoRefreshEnabled = ref(true)
 const overview = ref<ServiceOverview | null>(null)
 const healthPayload = ref<Record<string, unknown> | null>(null)
+const environmentInfo = ref<EnvironmentInfo | null>(null)
+const lastRefreshAt = ref<Date | null>(null)
+const pollTimer = ref<number | null>(null)
+const actionLogs = ref<ActionLogItem[]>([])
+const activeAction = ref<{ serviceId: ServiceId; action: ServiceAction } | null>(null)
 
 const serviceCards = computed<ManagedServiceStatus[]>(() => {
   if (!overview.value) return []
@@ -136,38 +256,73 @@ const serviceCards = computed<ManagedServiceStatus[]>(() => {
 })
 
 const runningCount = computed(() => serviceCards.value.filter(item => item.running).length)
+const hasServiceIssue = computed(() => serviceCards.value.some(item => !item.running))
 
-const webPortalUrl = computed(() => overview.value?.frontend.url || overview.value?.backend.url?.replace(/\/health$/, '') || '')
+const webPortalUrl = computed(() => {
+  return overview.value?.frontend.url || overview.value?.backend.url?.replace(/\/health$/, '') || ''
+})
 
 const healthPreview = computed(() => {
   if (!healthPayload.value) return '暂无健康数据，请先刷新服务状态。'
   return JSON.stringify(healthPayload.value, null, 2)
 })
 
-async function refreshOverview() {
+const lastRefreshText = computed(() => {
+  if (!lastRefreshAt.value) return '尚未巡检'
+  return lastRefreshAt.value.toLocaleTimeString('zh-CN', { hour12: false })
+})
+
+function pushLog(level: ActionLogItem['level'], title: string, messageText: string) {
+  actionLogs.value.unshift({
+    id: Date.now() + Math.floor(Math.random() * 1000),
+    title,
+    message: messageText,
+    time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    level,
+  })
+  actionLogs.value = actionLogs.value.slice(0, 10)
+}
+
+async function refreshDashboard(showToast = false) {
   loading.value = true
   try {
-    overview.value = await servicesApi.getOverview()
-    healthPayload.value = await servicesApi.getHealthPayload()
+    const [overviewData, healthData, envData] = await Promise.all([
+      servicesApi.getOverview(),
+      servicesApi.getHealthPayload(),
+      servicesApi.getEnvironmentInfo(),
+    ])
+    overview.value = overviewData
+    healthPayload.value = healthData
+    environmentInfo.value = envData
+    lastRefreshAt.value = new Date()
+
+    if (showToast) {
+      message.success('服务状态已刷新')
+    }
   } catch (error) {
     console.error(error)
+    pushLog('error', '刷新失败', '获取服务状态失败，请稍后重试。')
     message.error('获取服务状态失败')
   } finally {
     loading.value = false
   }
 }
 
-async function handleRestart(serviceId: 'backend' | 'frontend') {
-  restartingServiceId.value = serviceId
+async function runServiceAction(action: ServiceAction, serviceId: ServiceId) {
+  activeAction.value = { action, serviceId }
   try {
-    const result = await servicesApi.restart(serviceId)
-    message.success(`${result.message}：${result.url || '端口已恢复'}`)
-    await refreshOverview()
+    const result = await servicesApi.runAction(action, serviceId)
+    const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'
+    pushLog('success', `${actionLabel} ${serviceId}`, `${result.message}${result.url ? `：${result.url}` : ''}`)
+    message.success(result.message)
+    await refreshDashboard()
   } catch (error) {
     console.error(error)
-    message.error(error instanceof Error ? error.message : '重启失败')
+    const text = error instanceof Error ? error.message : '服务控制失败'
+    pushLog('error', `${serviceId} 操作失败`, text)
+    message.error(text)
   } finally {
-    restartingServiceId.value = null
+    activeAction.value = null
   }
 }
 
@@ -177,10 +332,43 @@ async function openWebPortal() {
     return
   }
   await servicesApi.openUrl(webPortalUrl.value)
+  pushLog('info', '打开浏览器入口', `已请求打开 ${webPortalUrl.value}`)
+}
+
+function stopPolling() {
+  if (pollTimer.value !== null) {
+    window.clearInterval(pollTimer.value)
+    pollTimer.value = null
+  }
+}
+
+function startPolling() {
+  stopPolling()
+  if (!autoRefreshEnabled.value) return
+  pollTimer.value = window.setInterval(() => {
+    void refreshDashboard()
+  }, AUTO_REFRESH_INTERVAL)
+}
+
+function toggleAutoRefresh() {
+  autoRefreshEnabled.value = !autoRefreshEnabled.value
+  if (autoRefreshEnabled.value) {
+    startPolling()
+    pushLog('info', '自动巡检已开启', `控制台将每 ${AUTO_REFRESH_INTERVAL / 1000} 秒刷新一次状态。`)
+  } else {
+    stopPolling()
+    pushLog('warning', '自动巡检已关闭', '当前改为手动刷新模式。')
+  }
 }
 
 onMounted(() => {
-  void refreshOverview()
+  void refreshDashboard()
+  startPolling()
+  pushLog('info', '控制台已启动', '本地服务控制台已就绪。')
+})
+
+onBeforeUnmount(() => {
+  stopPolling()
 })
 </script>
 
@@ -206,7 +394,7 @@ onMounted(() => {
 .service-console__container {
   position: relative;
   z-index: 1;
-  max-width: 1280px;
+  max-width: 1320px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -216,8 +404,8 @@ onMounted(() => {
 .hero-card,
 .service-card,
 .info-card {
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(18px);
+  background: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(20px);
   border: 1px solid rgba(148, 163, 184, 0.2);
   box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
 }
@@ -230,7 +418,6 @@ onMounted(() => {
 .hero-card__eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   margin-bottom: 18px;
   padding: 6px 12px;
   border-radius: 999px;
@@ -249,6 +436,10 @@ onMounted(() => {
   align-items: flex-start;
 }
 
+.hero-copy {
+  max-width: 760px;
+}
+
 .hero-card__title {
   margin: 0 0 12px;
   font-size: clamp(32px, 4vw, 48px);
@@ -257,7 +448,6 @@ onMounted(() => {
 }
 
 .hero-card__subtitle {
-  max-width: 760px;
   margin: 0;
   color: var(--app-text-secondary);
   font-size: 16px;
@@ -270,10 +460,34 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.alert-strip {
+  margin-top: 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.18);
+}
+
+.alert-strip p {
+  margin: 4px 0 0;
+  color: var(--app-text-secondary);
+}
+
+.alert-strip__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #ef4444;
+  margin-top: 4px;
+}
+
 .hero-stats {
   margin-top: 24px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -312,6 +526,10 @@ onMounted(() => {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
 }
 
+.details-grid--bottom {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+}
+
 .service-card {
   border-radius: 24px;
   padding: 24px;
@@ -328,11 +546,15 @@ onMounted(() => {
   align-items: flex-start;
 }
 
-.service-card__label-row {
+.service-card__label-row,
+.section-headline {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.service-card__label-row {
   margin-bottom: 10px;
 }
 
@@ -373,24 +595,31 @@ onMounted(() => {
   gap: 12px;
 }
 
-.service-meta__item {
+.service-meta__item,
+.env-item {
   padding: 14px 16px;
   border-radius: 18px;
   background: rgba(248, 250, 252, 0.88);
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
-.service-meta__label {
+.service-meta__label,
+.env-item__label {
   display: block;
   margin-bottom: 6px;
   color: var(--app-text-muted);
   font-size: 12px;
 }
 
-.service-meta__value {
+.service-meta__value,
+.env-item__value {
   color: var(--app-text-primary);
   font-weight: 600;
   word-break: break-all;
+}
+
+.env-item__value--path {
+  font-size: 13px;
 }
 
 .service-card__actions {
@@ -402,6 +631,17 @@ onMounted(() => {
 .info-card {
   border-radius: 24px;
   padding: 24px;
+}
+
+.env-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.env-item--wide {
+  grid-column: 1 / -1;
 }
 
 .info-list {
@@ -421,12 +661,70 @@ onMounted(() => {
   font-size: 13px;
   line-height: 1.65;
   overflow: auto;
-  min-height: 220px;
+  min-height: 260px;
 }
 
-@media (max-width: 1024px) {
+.timeline-list {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.timeline-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.timeline-item__marker {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  margin-top: 7px;
+  flex-shrink: 0;
+}
+
+.timeline-item__marker--info { background: #3b82f6; }
+.timeline-item__marker--success { background: #22c55e; }
+.timeline-item__marker--warning { background: #f59e0b; }
+.timeline-item__marker--error { background: #ef4444; }
+
+.timeline-item__content {
+  flex: 1;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.timeline-item__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--app-text-primary);
+}
+
+.timeline-item__top span,
+.timeline-item__content p,
+.empty-inline {
+  color: var(--app-text-secondary);
+}
+
+.timeline-item__content p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.empty-inline {
+  margin-top: 16px;
+}
+
+@media (max-width: 1100px) {
   .grid-section,
   .details-grid,
+  .details-grid--bottom,
   .hero-stats {
     grid-template-columns: 1fr;
   }
@@ -448,8 +746,17 @@ onMounted(() => {
     padding: 20px;
   }
 
-  .service-meta {
+  .service-meta,
+  .env-grid {
     grid-template-columns: 1fr;
+  }
+
+  .env-item--wide {
+    grid-column: auto;
+  }
+
+  .timeline-item__top {
+    flex-direction: column;
   }
 }
 </style>

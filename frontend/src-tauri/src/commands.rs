@@ -126,6 +126,65 @@ pub async fn restart_service(
     }
 }
 
+#[tauri::command]
+pub async fn start_service(
+    service_id: String,
+    manager: State<'_, Mutex<BackendManager>>,
+    port_state: State<'_, Mutex<u16>>,
+) -> Result<ServiceActionResult, String> {
+    match service_id.as_str() {
+        "backend" | "frontend" => {
+            let mut mgr = manager.lock().map_err(|e| e.to_string())?;
+            if mgr.is_running() {
+                let port = mgr.get_port();
+                return Ok(ServiceActionResult {
+                    service_id,
+                    running: true,
+                    port: Some(port),
+                    url: Some(format!("http://127.0.0.1:{}", port)),
+                    message: "服务已在运行".to_string(),
+                });
+            }
+
+            let new_port = mgr.start_and_wait(120)?;
+            *port_state.lock().unwrap() = new_port;
+
+            Ok(ServiceActionResult {
+                service_id,
+                running: true,
+                port: Some(new_port),
+                url: Some(format!("http://127.0.0.1:{}", new_port)),
+                message: "服务已启动".to_string(),
+            })
+        }
+        other => Err(format!("不支持的服务: {}", other)),
+    }
+}
+
+#[tauri::command]
+pub fn stop_service(
+    service_id: String,
+    manager: State<'_, Mutex<BackendManager>>,
+    port_state: State<'_, Mutex<u16>>,
+) -> Result<ServiceActionResult, String> {
+    match service_id.as_str() {
+        "backend" | "frontend" => {
+            let mgr = manager.lock().map_err(|e| e.to_string())?;
+            mgr.terminate();
+            *port_state.lock().unwrap() = 0;
+
+            Ok(ServiceActionResult {
+                service_id,
+                running: false,
+                port: None,
+                url: None,
+                message: "服务已停止".to_string(),
+            })
+        }
+        other => Err(format!("不支持的服务: {}", other)),
+    }
+}
+
 /// 在系统浏览器中打开 URL
 #[tauri::command]
 pub fn open_in_browser(url: String) -> Result<(), String> {

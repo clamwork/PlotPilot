@@ -109,6 +109,8 @@ pub fn run() {
             commands::get_backend_status,
             commands::get_service_overview,
             commands::restart_backend,
+            commands::start_service,
+            commands::stop_service,
             commands::restart_service,
             commands::open_in_browser,
             commands::run_installation,

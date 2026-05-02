@@ -1,7 +1,10 @@
 import { apiAxios, resolveHttpUrl } from './config'
 
+export type ServiceId = 'backend' | 'frontend'
+export type ServiceAction = 'start' | 'stop' | 'restart'
+
 export interface ManagedServiceStatus {
-  id: 'backend' | 'frontend'
+  id: ServiceId
   label: string
   running: boolean
   port?: number | null
@@ -20,6 +23,12 @@ export interface ServiceActionResult {
   port?: number | null
   url?: string | null
   message: string
+}
+
+export interface EnvironmentInfo {
+  python_available: boolean
+  has_embedded_python: boolean
+  project_root: string
 }
 
 function isTauriRuntime(): boolean {
@@ -73,6 +82,8 @@ async function getBrowserOverview(): Promise<ServiceOverview> {
 }
 
 export const servicesApi = {
+  isTauriRuntime,
+
   async getOverview(): Promise<ServiceOverview> {
     if (isTauriRuntime()) {
       return invokeTauri<ServiceOverview>('get_service_overview')
@@ -80,9 +91,16 @@ export const servicesApi = {
     return getBrowserOverview()
   },
 
-  async restart(serviceId: 'backend' | 'frontend'): Promise<ServiceActionResult> {
+  async runAction(action: ServiceAction, serviceId: ServiceId): Promise<ServiceActionResult> {
     if (!isTauriRuntime()) {
-      throw new Error('浏览器模式下不支持直接重启本地服务')
+      throw new Error('浏览器模式下不支持直接控制本地服务')
+    }
+
+    if (action === 'start') {
+      return invokeTauri<ServiceActionResult>('start_service', { serviceId })
+    }
+    if (action === 'stop') {
+      return invokeTauri<ServiceActionResult>('stop_service', { serviceId })
     }
     return invokeTauri<ServiceActionResult>('restart_service', { serviceId })
   },
@@ -99,6 +117,17 @@ export const servicesApi = {
     try {
       const response = await apiAxios.get('/health')
       return response as unknown as Record<string, unknown>
+    } catch {
+      return null
+    }
+  },
+
+  async getEnvironmentInfo(): Promise<EnvironmentInfo | null> {
+    if (!isTauriRuntime()) {
+      return null
+    }
+    try {
+      return await invokeTauri<EnvironmentInfo>('check_environment')
     } catch {
       return null
     }
