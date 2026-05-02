@@ -424,6 +424,41 @@ impl BackendManager {
     }
 
     /// 获取运行状态
+
+    pub fn health_check_passed(&self, port: u16) -> bool {
+        if port == 0 {
+            return false;
+        }
+        let health_url = format!("http://127.0.0.1:{}/health", port);
+        let agent: Agent = Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(2)))
+            .build()
+            .into();
+
+        matches!(agent.get(&health_url).call(), Ok(resp) if resp.status().as_u16() == 200)
+    }
+
+    pub fn diagnose_runtime_state(&self) -> RuntimeDiagnostic {
+        let port = self.get_port();
+        let process_running = self.is_running();
+        let port_listening = if port > 0 {
+            Self::is_port_listening(port)
+        } else {
+            false
+        };
+        let health_check_ok = if port_listening {
+            self.health_check_passed(port)
+        } else {
+            false
+        };
+
+        RuntimeDiagnostic {
+            port,
+            process_running,
+            port_listening,
+            health_check_ok,
+        }
+    }
     pub fn is_running(&self) -> bool {
         let mut guard = self.child.lock().unwrap();
         match guard.as_mut() {
@@ -630,6 +665,14 @@ impl BackendManager {
     }
 }
 
+
+#[derive(Debug, Clone)]
+pub struct RuntimeDiagnostic {
+    pub port: u16,
+    pub process_running: bool,
+    pub port_listening: bool,
+    pub health_check_ok: bool,
+}
 impl Drop for BackendManager {
     fn drop(&mut self) {
         self.terminate_hard();

@@ -38,6 +38,15 @@ export interface RuntimeLogSnapshot {
   lines: string[]
 }
 
+export interface ServiceRuntimeDiagnosis {
+  port: number
+  process_running: boolean
+  port_listening: boolean
+  health_check_ok: boolean
+  failure_reason?: string | null
+  summary: string
+}
+
 function isTauriRuntime(): boolean {
   if (typeof window === 'undefined') return false
   const w = window as Window & {
@@ -135,6 +144,17 @@ export const servicesApi = {
     }
     try {
       return await invokeTauri<EnvironmentInfo>('check_environment')
+    } catch {
+      return null
+    }
+  },
+
+  async diagnoseRuntime(): Promise<ServiceRuntimeDiagnosis | null> {
+    if (!isTauriRuntime()) {
+      return null
+    }
+    try {
+      return await invokeTauri<ServiceRuntimeDiagnosis>('diagnose_service_runtime')
     } catch {
       return null
     }

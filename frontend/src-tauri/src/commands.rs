@@ -6,7 +6,7 @@
 //!   - 重启后端
 //!   - 打开外部浏览器
 
-use crate::backend::BackendManager;
+use crate::backend::{BackendManager, RuntimeDiagnostic};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -280,6 +280,42 @@ pub fn extract_embedded_python(
     }
 }
 
+fn map_runtime_diagnosis(diag: RuntimeDiagnostic) -> ServiceRuntimeDiagnosis {
+    let failure_reason = if diag.process_running && !diag.port_listening {
+        Some("process_not_listening".to_string())
+    } else if !diag.process_running && diag.port_listening {
+        Some("port_occupied".to_string())
+    } else if diag.process_running && diag.port_listening && !diag.health_check_ok {
+        Some("health_check_failed".to_string())
+    } else {
+        None
+    };
+
+    let summary = match failure_reason.as_deref() {
+        Some("process_not_listening") => "?????????????????".to_string(),
+        Some("port_occupied") => "???????????????????????".to_string(),
+        Some("health_check_failed") => "??????????????".to_string(),
+        _ => "??????".to_string(),
+    };
+
+    ServiceRuntimeDiagnosis {
+        port: diag.port,
+        process_running: diag.process_running,
+        port_listening: diag.port_listening,
+        health_check_ok: diag.health_check_ok,
+        failure_reason,
+        summary,
+    }
+}
+
+#[tauri::command]
+pub fn diagnose_service_runtime(
+    manager: State<'_, Mutex<BackendManager>>,
+) -> Result<ServiceRuntimeDiagnosis, String> {
+    let mgr = manager.lock().map_err(|e| e.to_string())?;
+    Ok(map_runtime_diagnosis(mgr.diagnose_runtime_state()))
+}
+
 #[tauri::command]
 pub fn get_runtime_logs(
     manager: State<'_, Mutex<BackendManager>>,
@@ -351,6 +387,16 @@ pub struct ServiceActionResult {
     port: Option<u16>,
     url: Option<String>,
     message: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ServiceRuntimeDiagnosis {
+    port: u16,
+    process_running: bool,
+    port_listening: bool,
+    health_check_ok: bool,
+    failure_reason: Option<String>,
+    summary: String,
 }
 
 #[derive(Serialize, Clone)]

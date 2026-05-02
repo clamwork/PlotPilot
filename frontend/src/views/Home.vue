@@ -203,6 +203,9 @@
               <p class="timeout-config__hint">
                 {{ "\u8303\u56f4\uff1a" }}{{ TIMEOUT_MIN_SECONDS }}-{{ TIMEOUT_MAX_SECONDS }}{{ "\u79d2\uff0c\u4f1a\u4fdd\u5b58\u5230\u672c\u5730\u8bbe\u7f6e\u3002\u9608\u503c\u8fc7\u5c0f\u53ef\u80fd\u5bfc\u81f4\u8bef\u62a5\u8d85\u65f6\u3002" }}
               </p>
+              <p class="timeout-config__hint">
+                {{ "\u8fd0\u884c\u8bca\u65ad\uff1a" }}{{ runtimeDiagnosis?.summary || "\u6682\u672a\u83b7\u53d6" }}
+              </p>
             </div>
           </div>
         </article>
@@ -365,6 +368,7 @@ import {
   type EnvironmentInfo,
   type ManagedServiceStatus,
   type RuntimeLogSnapshot,
+  type ServiceRuntimeDiagnosis,
   type ServiceAction,
   type ServiceId,
   type ServiceOverview,
@@ -430,6 +434,7 @@ const autoRefreshEnabled = ref(true)
 const overview = ref<ServiceOverview | null>(null)
 const healthPayload = ref<Record<string, unknown> | null>(null)
 const environmentInfo = ref<EnvironmentInfo | null>(null)
+const runtimeDiagnosis = ref<ServiceRuntimeDiagnosis | null>(null)
 const runtimeLogs = ref<RuntimeLogSnapshot | null>(null)
 const lastRefreshAt = ref<Date | null>(null)
 const pollTimer = ref<number | null>(null)
@@ -651,6 +656,7 @@ function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardVi
   let stateHeadline = service.running ? '\u7a33\u5b9a\u8fd0\u884c' : '\u7b49\u5f85\u542f\u52a8'
   let statusDetail = service.detail
   let recommendation = service.running ? '\u53ef\u76f4\u63a5\u6253\u5f00\u6216\u91cd\u542f' : '\u5efa\u8bae\u5148\u542f\u52a8\u6216\u91cd\u542f'
+  const diagnosis = runtimeDiagnosis.value
   const elapsedMs = getTransitionElapsedMs(transition)
   let durationLabel = `\u8037\u65f6\uff1a${formatDuration(elapsedMs)}`
   let timeoutHint = `\u8d85\u65f6\u9608\u503c\uff1a${serviceActionTimeoutLabel.value}`
@@ -699,6 +705,27 @@ function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardVi
       statusDetail = transition.message || getActionTimeoutMessage(transition.lastAction)
       recommendation = '\u5efa\u8bae\u5148\u67e5\u770b\u542f\u52a8\u65e5\u5fd7\u4e0e\u7aef\u53e3\u5360\u7528\uff0c\u786e\u8ba4\u540e\u518d\u91cd\u8bd5\u3002'
     }
+  } else if (!service.running && diagnosis?.failure_reason === 'port_occupied') {
+    visualState = 'failed'
+    badgeType = 'warning'
+    badgeLabel = '\u7aef\u53e3\u88ab\u5360\u7528'
+    stateHeadline = '\u68c0\u6d4b\u5230\u7aef\u53e3\u51b2\u7a81'
+    statusDetail = diagnosis.summary
+    recommendation = '\u5efa\u8bae\u91ca\u653e\u5360\u7528\u7aef\u53e3\u7684\u5176\u4ed6\u8fdb\u7a0b\uff0c\u7136\u540e\u91cd\u8bd5\u542f\u52a8\u3002'
+  } else if (!service.running && diagnosis?.failure_reason === 'process_not_listening') {
+    visualState = 'failed'
+    badgeType = 'error'
+    badgeLabel = '\u8fdb\u7a0b\u672a\u5c31\u7eea'
+    stateHeadline = '\u5b50\u8fdb\u7a0b\u4ecd\u5728\u4f46\u672a\u76d1\u542c'
+    statusDetail = diagnosis.summary
+    recommendation = '\u5efa\u8bae\u67e5\u770b\u542f\u52a8\u65e5\u5fd7\uff0c\u5fc5\u8981\u65f6\u5148\u505c\u6b62\u518d\u91cd\u542f\u670d\u52a1\u3002'
+  } else if (service.running && diagnosis?.failure_reason === 'health_check_failed') {
+    visualState = 'failed'
+    badgeType = 'warning'
+    badgeLabel = '\u5065\u5eb7\u68c0\u67e5\u672a\u901a\u8fc7'
+    stateHeadline = '\u7aef\u53e3\u5df2\u76d1\u542c\u4f46\u670d\u52a1\u672a\u5c31\u7eea'
+    statusDetail = diagnosis.summary
+    recommendation = '\u5efa\u8bae\u7b49\u5f85\u77ed\u6682\u6062\u590d\uff0c\u5982\u4ecd\u5931\u8d25\u5219\u67e5\u770b\u5065\u5eb7\u68c0\u67e5\u4e0e\u65e5\u5fd7\u3002'
   } else if (recent && transition.lastOutcome === 'error') {
     visualState = 'failed'
     badgeType = 'error'
@@ -746,16 +773,18 @@ async function scrollLogToBottom() {
 async function refreshDashboard(showToast = false) {
   loading.value = true
   try {
-    const [logData, overviewData, healthData, envData] = await Promise.all([
+    const [logData, overviewData, healthData, envData, diagnosisData] = await Promise.all([
       servicesApi.getRuntimeLogs(200),
       servicesApi.getOverview(),
       servicesApi.getHealthPayload(),
       servicesApi.getEnvironmentInfo(),
+      servicesApi.diagnoseRuntime(),
     ])
     runtimeLogs.value = logData
     overview.value = overviewData
     healthPayload.value = healthData
     environmentInfo.value = envData
+    runtimeDiagnosis.value = diagnosisData
     lastRefreshAt.value = new Date()
 
     if (logAutoTailEnabled.value) {
