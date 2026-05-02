@@ -8,6 +8,9 @@
 
 use crate::backend::BackendManager;
 use serde::Serialize;
+use std::collections::VecDeque;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
@@ -277,6 +280,47 @@ pub fn extract_embedded_python(
     }
 }
 
+#[tauri::command]
+pub fn get_runtime_logs(
+    manager: State<'_, Mutex<BackendManager>>,
+    lines: Option<usize>,
+) -> Result<RuntimeLogSnapshot, String> {
+    let mgr = manager.lock().map_err(|e| e.to_string())?;
+    let log_path = mgr.resolve_runtime_log_file_path();
+    let requested_lines = lines.unwrap_or(200).clamp(20, 1000);
+
+    if !log_path.exists() {
+        return Ok(RuntimeLogSnapshot {
+            path: log_path.to_string_lossy().to_string(),
+            exists: false,
+            line_count: 0,
+            lines: vec![],
+        });
+    }
+
+    let file = File::open(&log_path)
+        .map_err(|e| format!("打开日志文件失败 {}: {}", log_path.display(), e))?;
+    let reader = BufReader::new(file);
+    let mut ring = VecDeque::with_capacity(requested_lines);
+    let mut total_count = 0usize;
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("读取日志文件失败 {}: {}", log_path.display(), e))?;
+        total_count += 1;
+        if ring.len() == requested_lines {
+            ring.pop_front();
+        }
+        ring.push_back(line);
+    }
+
+    Ok(RuntimeLogSnapshot {
+        path: log_path.to_string_lossy().to_string(),
+        exists: true,
+        line_count: total_count,
+        lines: ring.into_iter().collect(),
+    })
+}
+
 /// 后端状态返回结构
 #[derive(serde::Serialize, Clone)]
 pub struct BackendStatus {
@@ -307,6 +351,14 @@ pub struct ServiceActionResult {
     port: Option<u16>,
     url: Option<String>,
     message: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct RuntimeLogSnapshot {
+    path: String,
+    exists: bool,
+    line_count: usize,
+    lines: Vec<String>,
 }
 
 /// 安装状态返回结构

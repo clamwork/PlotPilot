@@ -93,6 +93,15 @@ impl BackendManager {
         Ok(())
     }
 
+    pub(crate) fn resolve_runtime_log_file_path(&self) -> PathBuf {
+        if Self::should_inject_prod_data_dir() {
+            if let Ok(data_dir) = Self::resolve_prod_data_dir(&self._app_handle) {
+                return data_dir.join("logs").join("aitext.log");
+            }
+        }
+        self.project_root.join("logs").join("aitext.log")
+    }
+
     /// PyInstaller onedir：`$RESOURCE/plotpilot-backend/plotpilot-backend.exe`（见 tauri.conf resources 映射）
     fn find_frozen_backend_exe(handle: &AppHandle) -> Option<PathBuf> {
         // 方案 1a：与 bundle.resources 映射一致（推荐；安装包与 tauri build 均可用）

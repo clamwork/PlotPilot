@@ -170,12 +170,40 @@
 
         <article class="info-card">
           <div class="section-headline">
+            <h3 class="info-card__title">真实运行日志</h3>
+            <n-button text type="primary" @click="refreshDashboard">
+              刷新日志
+            </n-button>
+          </div>
+          <div class="log-summary">
+            <span>日志路径：{{ runtimeLogs?.path || '未获取到' }}</span>
+            <span>总行数：{{ runtimeLogs?.line_count ?? 0 }}</span>
+          </div>
+          <pre class="health-preview">{{ runtimeLogText }}</pre>
+        </article>
+      </section>
+
+      <section class="details-grid">
+        <article class="info-card">
+          <div class="section-headline">
             <h3 class="info-card__title">后端健康信息</h3>
             <n-tag size="small" :bordered="false" :type="healthPayload ? 'success' : 'default'">
               {{ healthPayload ? '已获取' : '暂无数据' }}
             </n-tag>
           </div>
           <pre class="health-preview">{{ healthPreview }}</pre>
+        </article>
+        <article class="info-card">
+          <div class="section-headline">
+            <h3 class="info-card__title">日志说明</h3>
+            <n-tag size="small" :bordered="false" type="warning">实时 tail</n-tag>
+          </div>
+          <ul class="info-list">
+            <li>这里读取的是本地真实日志文件，不是模拟数据。</li>
+            <li>发布版优先读取 AppData 下的 <code>data/logs/aitext.log</code>。</li>
+            <li>开发模式回退读取仓库内的 <code>logs/aitext.log</code>。</li>
+            <li>默认展示最后 200 行，便于快速定位最近崩溃或重启问题。</li>
+          </ul>
         </article>
       </section>
 
@@ -224,6 +252,7 @@ import {
   servicesApi,
   type EnvironmentInfo,
   type ManagedServiceStatus,
+  type RuntimeLogSnapshot,
   type ServiceAction,
   type ServiceId,
   type ServiceOverview,
@@ -245,6 +274,7 @@ const autoRefreshEnabled = ref(true)
 const overview = ref<ServiceOverview | null>(null)
 const healthPayload = ref<Record<string, unknown> | null>(null)
 const environmentInfo = ref<EnvironmentInfo | null>(null)
+const runtimeLogs = ref<RuntimeLogSnapshot | null>(null)
 const lastRefreshAt = ref<Date | null>(null)
 const pollTimer = ref<number | null>(null)
 const actionLogs = ref<ActionLogItem[]>([])
@@ -267,6 +297,13 @@ const healthPreview = computed(() => {
   return JSON.stringify(healthPayload.value, null, 2)
 })
 
+const runtimeLogText = computed(() => {
+  if (!runtimeLogs.value) return '尚未读取日志。'
+  if (!runtimeLogs.value.exists) return '当前日志文件尚未生成。'
+  if (!runtimeLogs.value.lines.length) return '日志文件存在，但暂无内容。'
+  return runtimeLogs.value.lines.join('\n')
+})
+
 const lastRefreshText = computed(() => {
   if (!lastRefreshAt.value) return '尚未巡检'
   return lastRefreshAt.value.toLocaleTimeString('zh-CN', { hour12: false })
@@ -286,11 +323,13 @@ function pushLog(level: ActionLogItem['level'], title: string, messageText: stri
 async function refreshDashboard(showToast = false) {
   loading.value = true
   try {
-    const [overviewData, healthData, envData] = await Promise.all([
+    const [logData, overviewData, healthData, envData] = await Promise.all([
+      servicesApi.getRuntimeLogs(200),
       servicesApi.getOverview(),
       servicesApi.getHealthPayload(),
       servicesApi.getEnvironmentInfo(),
     ])
+    runtimeLogs.value = logData
     overview.value = overviewData
     healthPayload.value = healthData
     environmentInfo.value = envData
@@ -649,6 +688,15 @@ onBeforeUnmount(() => {
   padding-left: 20px;
   color: var(--app-text-secondary);
   line-height: 1.85;
+}
+
+.log-summary {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--app-text-muted);
+  font-size: 13px;
 }
 
 .health-preview {

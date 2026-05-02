@@ -31,6 +31,13 @@ export interface EnvironmentInfo {
   project_root: string
 }
 
+export interface RuntimeLogSnapshot {
+  path: string
+  exists: boolean
+  line_count: number
+  lines: string[]
+}
+
 function isTauriRuntime(): boolean {
   if (typeof window === 'undefined') return false
   const w = window as Window & {
@@ -128,6 +135,17 @@ export const servicesApi = {
     }
     try {
       return await invokeTauri<EnvironmentInfo>('check_environment')
+    } catch {
+      return null
+    }
+  },
+
+  async getRuntimeLogs(lines = 200): Promise<RuntimeLogSnapshot | null> {
+    if (!isTauriRuntime()) {
+      return null
+    }
+    try {
+      return await invokeTauri<RuntimeLogSnapshot>('get_runtime_logs', { lines })
     } catch {
       return null
     }

@@ -116,6 +116,7 @@ pub fn run() {
             commands::run_installation,
             commands::check_environment,
             commands::extract_embedded_python,
+            commands::get_runtime_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PlotPilot");
