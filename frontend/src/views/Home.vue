@@ -171,9 +171,18 @@
         <article class="info-card">
           <div class="section-headline">
             <h3 class="info-card__title">日志筛选面板</h3>
-            <n-button text type="primary" @click="refreshDashboard">
-              刷新日志
-            </n-button>
+            <div class="log-panel-actions">
+              <n-button
+                text
+                :type="logAutoTailEnabled ? 'success' : 'default'"
+                @click="toggleLogAutoTail"
+              >
+                {{ logAutoTailEnabled ? '日志追尾中' : '开启日志追尾' }}
+              </n-button>
+              <n-button text type="primary" @click="refreshDashboard">
+                刷新日志
+              </n-button>
+            </div>
           </div>
 
           <div class="log-toolbar">
@@ -225,9 +234,10 @@
           <div class="log-summary">
             <span>日志路径：{{ runtimeLogs?.path || '未获取到' }}</span>
             <span>筛选状态：{{ logFilterSummary }}</span>
+            <span>追尾状态：{{ logAutoTailEnabled ? '自动刷新并滚动到底部' : '手动查看' }}</span>
           </div>
 
-          <div class="log-viewer">
+          <div ref="logViewerRef" class="log-viewer">
             <div v-if="filteredLogEntries.length" class="log-lines">
               <div
                 v-for="entry in filteredLogEntries"
@@ -309,7 +319,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import {
   servicesApi,
@@ -350,10 +360,13 @@ const environmentInfo = ref<EnvironmentInfo | null>(null)
 const runtimeLogs = ref<RuntimeLogSnapshot | null>(null)
 const lastRefreshAt = ref<Date | null>(null)
 const pollTimer = ref<number | null>(null)
+const logTailTimer = ref<number | null>(null)
 const actionLogs = ref<ActionLogItem[]>([])
 const activeAction = ref<{ serviceId: ServiceId; action: ServiceAction } | null>(null)
 const logSearch = ref('')
 const logLevelFilter = ref<LogLevelFilter>('all')
+const logAutoTailEnabled = ref(true)
+const logViewerRef = ref<HTMLElement | null>(null)
 
 const serviceCards = computed<ManagedServiceStatus[]>(() => {
   if (!overview.value) return []
@@ -449,6 +462,13 @@ function clearLogFilters() {
   logLevelFilter.value = 'all'
 }
 
+async function scrollLogToBottom() {
+  await nextTick()
+  if (logViewerRef.value) {
+    logViewerRef.value.scrollTop = logViewerRef.value.scrollHeight
+  }
+}
+
 async function refreshDashboard(showToast = false) {
   loading.value = true
   try {
@@ -463,6 +483,10 @@ async function refreshDashboard(showToast = false) {
     healthPayload.value = healthData
     environmentInfo.value = envData
     lastRefreshAt.value = new Date()
+
+    if (logAutoTailEnabled.value) {
+      void scrollLogToBottom()
+    }
 
     if (showToast) {
       message.success('服务状态已刷新')
@@ -510,12 +534,27 @@ function stopPolling() {
   }
 }
 
+function stopLogTailPolling() {
+  if (logTailTimer.value !== null) {
+    window.clearInterval(logTailTimer.value)
+    logTailTimer.value = null
+  }
+}
+
 function startPolling() {
   stopPolling()
   if (!autoRefreshEnabled.value) return
   pollTimer.value = window.setInterval(() => {
     void refreshDashboard()
   }, AUTO_REFRESH_INTERVAL)
+}
+
+function startLogTailPolling() {
+  stopLogTailPolling()
+  if (!logAutoTailEnabled.value) return
+  logTailTimer.value = window.setInterval(() => {
+    void refreshDashboard()
+  }, 3000)
 }
 
 function toggleAutoRefresh() {
@@ -529,14 +568,28 @@ function toggleAutoRefresh() {
   }
 }
 
+function toggleLogAutoTail() {
+  logAutoTailEnabled.value = !logAutoTailEnabled.value
+  if (logAutoTailEnabled.value) {
+    startLogTailPolling()
+    void scrollLogToBottom()
+    pushLog('info', '日志追尾已开启', '日志面板将每 3 秒自动刷新并滚动到底部。')
+  } else {
+    stopLogTailPolling()
+    pushLog('warning', '日志追尾已关闭', '日志面板改为手动刷新模式。')
+  }
+}
+
 onMounted(() => {
   void refreshDashboard()
   startPolling()
+  startLogTailPolling()
   pushLog('info', '控制台已启动', '本地服务控制台已就绪。')
 })
 
 onBeforeUnmount(() => {
   stopPolling()
+  stopLogTailPolling()
 })
 </script>
 
@@ -793,6 +846,13 @@ onBeforeUnmount(() => {
 .service-card__actions {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.log-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
