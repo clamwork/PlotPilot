@@ -69,7 +69,10 @@
           v-for="service in serviceCards"
           :key="service.id"
           class="service-card"
-          :class="{ 'service-card--down': !service.running }"
+          :class="{
+            'service-card--down': service.visualState === 'stopped' || service.visualState === 'failed',
+            'service-card--transition': service.isTransitioning,
+          }"
         >
           <div class="service-card__top">
             <div>
@@ -78,15 +81,19 @@
                 <n-tag
                   size="small"
                   round
-                  :type="service.running ? 'success' : 'error'"
+                  :type="service.badgeType"
                   :bordered="false"
                 >
-                  {{ service.running ? '运行中' : '不可用' }}
+                  {{ service.badgeLabel }}
                 </n-tag>
               </div>
-              <p class="service-card__desc">{{ service.detail }}</p>
+              <p class="service-card__desc">{{ service.statusDetail }}</p>
+              <div class="service-state-row">
+                <span class="service-state-row__label">{{ "\u72b6\u6001\u673a\u9636\u6bb5" }}</span>
+                <strong>{{ service.stateHeadline }}</strong>
+              </div>
             </div>
-            <div class="service-indicator" :class="{ 'service-indicator--down': !service.running }" />
+            <div class="service-indicator" :class="service.indicatorClass" />
           </div>
 
           <div class="service-meta">
@@ -100,7 +107,7 @@
             </div>
             <div class="service-meta__item">
               <span class="service-meta__label">建议动作</span>
-              <span class="service-meta__value">{{ service.running ? '可直接打开或重启' : '建议先启动或重启' }}</span>
+              <span class="service-meta__value">{{ service.recommendation }}</span>
             </div>
             <div class="service-meta__item">
               <span class="service-meta__label">依赖关系</span>
@@ -113,7 +120,7 @@
               type="success"
               secondary
               :loading="activeAction?.serviceId === service.id && activeAction?.action === 'start'"
-              :disabled="service.running"
+              :disabled="!service.canStart"
               @click="runServiceAction('start', service.id)"
             >
               启动
@@ -122,7 +129,7 @@
               type="warning"
               secondary
               :loading="activeAction?.serviceId === service.id && activeAction?.action === 'stop'"
-              :disabled="!service.running"
+              :disabled="!service.canStop"
               @click="runServiceAction('stop', service.id)"
             >
               停止
@@ -131,6 +138,7 @@
               type="primary"
               secondary
               :loading="activeAction?.serviceId === service.id && activeAction?.action === 'restart'"
+              :disabled="!service.canRestart"
               @click="runServiceAction('restart', service.id)"
             >
               重启
@@ -341,6 +349,17 @@ interface ActionLogItem {
 
 type LogLevelFilter = 'all' | 'error' | 'warning'
 type ParsedLogLevel = 'error' | 'warning' | 'info' | 'plain'
+type ServiceVisualState = 'running' | 'stopped' | 'starting' | 'stopping' | 'restarting' | 'failed' | 'recovering'
+type ServiceTransitionPhase = 'idle' | 'starting' | 'stopping' | 'restarting'
+type ServiceBadgeType = 'default' | 'primary' | 'info' | 'success' | 'warning' | 'error'
+
+interface ServiceTransitionSnapshot {
+  phase: ServiceTransitionPhase
+  lastAction: ServiceAction | null
+  lastOutcome: 'success' | 'error' | null
+  message: string
+  changedAt: number | null
+}
 
 interface ParsedLogEntry {
   id: number
@@ -349,7 +368,22 @@ interface ParsedLogEntry {
   levelLabel: string
 }
 
+interface ServiceCardViewModel extends ManagedServiceStatus {
+  visualState: ServiceVisualState
+  badgeType: ServiceBadgeType
+  badgeLabel: string
+  stateHeadline: string
+  statusDetail: string
+  recommendation: string
+  indicatorClass: string[]
+  isTransitioning: boolean
+  canStart: boolean
+  canStop: boolean
+  canRestart: boolean
+}
+
 const AUTO_REFRESH_INTERVAL = 8000
+const SERVICE_STATE_STICKY_MS = 10000
 
 const message = useMessage()
 const loading = ref(false)
@@ -367,14 +401,20 @@ const logSearch = ref('')
 const logLevelFilter = ref<LogLevelFilter>('all')
 const logAutoTailEnabled = ref(true)
 const logViewerRef = ref<HTMLElement | null>(null)
+const serviceTransitions = ref<Record<ServiceId, ServiceTransitionSnapshot>>({
+  backend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null },
+  frontend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null },
+})
 
-const serviceCards = computed<ManagedServiceStatus[]>(() => {
+const serviceCards = computed<ServiceCardViewModel[]>(() => {
   if (!overview.value) return []
-  return [overview.value.backend, overview.value.frontend]
+  return [overview.value.backend, overview.value.frontend].map(buildServiceCardViewModel)
 })
 
 const runningCount = computed(() => serviceCards.value.filter(item => item.running).length)
-const hasServiceIssue = computed(() => serviceCards.value.some(item => !item.running))
+const hasServiceIssue = computed(() =>
+  serviceCards.value.some(item => ['stopped', 'failed'].includes(item.visualState)),
+)
 
 const webPortalUrl = computed(() => {
   return overview.value?.frontend.url || overview.value?.backend.url?.replace(/\/health$/, '') || ''
@@ -462,6 +502,90 @@ function clearLogFilters() {
   logLevelFilter.value = 'all'
 }
 
+function getServiceTransition(serviceId: ServiceId): ServiceTransitionSnapshot {
+  return serviceTransitions.value[serviceId]
+}
+
+function setServiceTransition(serviceId: ServiceId, patch: Partial<ServiceTransitionSnapshot>) {
+  serviceTransitions.value[serviceId] = {
+    ...serviceTransitions.value[serviceId],
+    ...patch,
+    changedAt: Date.now(),
+  }
+}
+
+function isRecentTransition(snapshot: ServiceTransitionSnapshot) {
+  return !!snapshot.changedAt && Date.now() - snapshot.changedAt < SERVICE_STATE_STICKY_MS
+}
+
+function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardViewModel {
+  const transition = getServiceTransition(service.id)
+  const isTransitioning = transition.phase !== 'idle'
+  const recent = isRecentTransition(transition)
+
+  let visualState: ServiceVisualState = service.running ? 'running' : 'stopped'
+  let badgeType: ServiceBadgeType = service.running ? 'success' : 'error'
+  let badgeLabel = service.running ? '\u8fd0\u884c\u4e2d' : '\u4e0d\u53ef\u7528'
+  let stateHeadline = service.running ? '\u7a33\u5b9a\u8fd0\u884c' : '\u7b49\u5f85\u542f\u52a8'
+  let statusDetail = service.detail
+  let recommendation = service.running ? '\u53ef\u76f4\u63a5\u6253\u5f00\u6216\u91cd\u542f' : '\u5efa\u8bae\u5148\u542f\u52a8\u6216\u91cd\u542f'
+
+  if (transition.phase === 'starting') {
+    visualState = 'starting'
+    badgeType = 'warning'
+    badgeLabel = '\u542f\u52a8\u4e2d'
+    stateHeadline = '\u8fdb\u7a0b\u62c9\u8d77\u4e2d'
+    statusDetail = '\u5df2\u53d1\u8d77\u542f\u52a8\u8bf7\u6c42\uff0c\u6b63\u5728\u7b49\u5f85\u672c\u5730\u670d\u52a1\u5c31\u7eea\u5e76\u8fd4\u56de\u8bbf\u95ee\u5730\u5740\u3002'
+    recommendation = '\u8bf7\u7b49\u5f85\u542f\u52a8\u5b8c\u6210\uff0c\u671f\u95f4\u4e0d\u8981\u91cd\u590d\u70b9\u51fb\u542f\u52a8\u3002'
+  } else if (transition.phase === 'stopping') {
+    visualState = 'stopping'
+    badgeType = 'warning'
+    badgeLabel = '\u505c\u6b62\u4e2d'
+    stateHeadline = '\u6b63\u5728\u91ca\u653e\u7aef\u53e3'
+    statusDetail = '\u5df2\u53d1\u8d77\u505c\u6b62\u8bf7\u6c42\uff0c\u6b63\u5728\u7ec8\u6b62\u672c\u5730\u8fdb\u7a0b\u5e76\u56de\u6536\u76d1\u542c\u7aef\u53e3\u3002'
+    recommendation = '\u8bf7\u7b49\u5f85\u505c\u6b62\u5b8c\u6210\uff0c\u4e4b\u540e\u53ef\u91cd\u65b0\u542f\u52a8\u670d\u52a1\u3002'
+  } else if (transition.phase === 'restarting') {
+    visualState = 'restarting'
+    badgeType = 'info'
+    badgeLabel = '\u91cd\u542f\u4e2d'
+    stateHeadline = '\u505c\u6b62\u540e\u91cd\u65b0\u62c9\u8d77'
+    statusDetail = '\u670d\u52a1\u6b63\u5728\u6267\u884c\u91cd\u542f\u6d41\u7a0b\uff1a\u5148\u505c\u6b62\u65e7\u8fdb\u7a0b\uff0c\u518d\u542f\u52a8\u65b0\u8fdb\u7a0b\u3002'
+    recommendation = '\u91cd\u542f\u671f\u95f4\u6d4f\u89c8\u5668\u5165\u53e3\u53ef\u80fd\u77ed\u6682\u4e0d\u53ef\u7528\uff0c\u8bf7\u7a0d\u5019\u3002'
+  } else if (recent && transition.lastOutcome === 'error') {
+    visualState = 'failed'
+    badgeType = 'error'
+    badgeLabel = '\u64cd\u4f5c\u5931\u8d25'
+    stateHeadline = '\u9700\u8981\u4eba\u5de5\u5904\u7406'
+    statusDetail = transition.message || '\u6700\u8fd1\u4e00\u6b21\u670d\u52a1\u64cd\u4f5c\u5931\u8d25\uff0c\u8bf7\u67e5\u770b\u65e5\u5fd7\u9762\u677f\u5b9a\u4f4d\u539f\u56e0\u3002'
+    recommendation = '\u5efa\u8bae\u5148\u67e5\u770b ERROR \u65e5\u5fd7\uff0c\u518d\u51b3\u5b9a\u91cd\u8bd5\u542f\u52a8\u8fd8\u662f\u91cd\u542f\u3002'
+  } else if (recent && transition.lastOutcome === 'success' && transition.lastAction) {
+    visualState = 'recovering'
+    badgeType = service.running ? 'success' : 'default'
+    badgeLabel = transition.lastAction === 'start' ? '\u5df2\u542f\u52a8' : transition.lastAction === 'stop' ? '\u5df2\u505c\u6b62' : '\u5df2\u91cd\u542f'
+    stateHeadline = transition.lastAction === 'start' ? '\u521a\u5b8c\u6210\u542f\u52a8' : transition.lastAction === 'stop' ? '\u521a\u5b8c\u6210\u505c\u6b62' : '\u521a\u5b8c\u6210\u91cd\u542f'
+    statusDetail = transition.message || service.detail
+    recommendation = service.running ? '\u5efa\u8bae\u89c2\u5bdf\u51e0\u79d2\u5e76\u5173\u6ce8\u65e5\u5fd7\u662f\u5426\u7ee7\u7eed\u62a5\u9519\u3002' : '\u5f53\u524d\u53ef\u4fdd\u6301\u505c\u6b62\u72b6\u6001\uff0c\u6216\u6309\u9700\u91cd\u65b0\u542f\u52a8\u3002'
+  }
+
+  return {
+    ...service,
+    visualState,
+    badgeType,
+    badgeLabel,
+    stateHeadline,
+    statusDetail,
+    recommendation,
+    indicatorClass: [
+      `service-indicator--${visualState}`,
+      ...(isTransitioning ? ['service-indicator--pulse'] : []),
+    ],
+    isTransitioning,
+    canStart: !isTransitioning && !service.running,
+    canStop: !isTransitioning && service.running,
+    canRestart: !isTransitioning,
+  }
+}
+
 async function scrollLogToBottom() {
   await nextTick()
   if (logViewerRef.value) {
@@ -502,15 +626,33 @@ async function refreshDashboard(showToast = false) {
 
 async function runServiceAction(action: ServiceAction, serviceId: ServiceId) {
   activeAction.value = { action, serviceId }
+  setServiceTransition(serviceId, {
+    phase: action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting',
+    lastAction: action,
+    lastOutcome: null,
+    message: '',
+  })
   try {
     const result = await servicesApi.runAction(action, serviceId)
     const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'
+    setServiceTransition(serviceId, {
+      phase: 'idle',
+      lastAction: action,
+      lastOutcome: 'success',
+      message: result.message,
+    })
     pushLog('success', `${actionLabel} ${serviceId}`, `${result.message}${result.url ? `：${result.url}` : ''}`)
     message.success(result.message)
     await refreshDashboard()
   } catch (error) {
     console.error(error)
     const text = error instanceof Error ? error.message : '服务控制失败'
+    setServiceTransition(serviceId, {
+      phase: 'idle',
+      lastAction: action,
+      lastOutcome: 'error',
+      message: text,
+    })
     pushLog('error', `${serviceId} 操作失败`, text)
     message.error(text)
   } finally {
@@ -760,6 +902,11 @@ onBeforeUnmount(() => {
   border-color: rgba(239, 68, 68, 0.22);
 }
 
+.service-card--transition {
+  border-color: rgba(59, 130, 246, 0.26);
+  box-shadow: 0 20px 50px rgba(37, 99, 235, 0.12);
+}
+
 .service-card__top {
   display: flex;
   justify-content: space-between;
@@ -795,6 +942,20 @@ onBeforeUnmount(() => {
   line-height: 1.7;
 }
 
+.service-state-row {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+}
+
+.service-state-row__label {
+  color: var(--app-text-muted);
+}
+
 .service-indicator {
   width: 12px;
   height: 12px;
@@ -807,6 +968,33 @@ onBeforeUnmount(() => {
 .service-indicator--down {
   background: #ef4444;
   box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.12);
+}
+
+.service-indicator--running,
+.service-indicator--recovering {
+  background: #22c55e;
+  box-shadow: 0 0 0 8px rgba(34, 197, 94, 0.14);
+}
+
+.service-indicator--starting,
+.service-indicator--stopping {
+  background: #f59e0b;
+  box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.14);
+}
+
+.service-indicator--restarting {
+  background: #3b82f6;
+  box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.14);
+}
+
+.service-indicator--stopped,
+.service-indicator--failed {
+  background: #ef4444;
+  box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.12);
+}
+
+.service-indicator--pulse {
+  animation: servicePulse 1.4s ease-in-out infinite;
 }
 
 .service-meta {
@@ -1038,6 +1226,18 @@ onBeforeUnmount(() => {
 .timeline-item__content p,
 .empty-inline {
   color: var(--app-text-secondary);
+}
+
+@keyframes servicePulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.72;
+  }
 }
 
 .timeline-item__content p {
