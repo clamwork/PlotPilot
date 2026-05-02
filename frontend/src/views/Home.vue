@@ -154,26 +154,55 @@
             </n-button>
           </div>
         </article>
-      </section>
-
-      <section class="details-grid">
         <article class="info-card">
           <div class="section-headline">
-            <h3 class="info-card__title">运行环境</h3>
-            <n-tag size="small" :bordered="false" type="info">桌面壳侧</n-tag>
+            <h3 class="info-card__title">??????</h3>
+            <n-tag size="small" :bordered="false" type="info">??????</n-tag>
           </div>
           <div class="env-grid">
             <div class="env-item">
-              <span class="env-item__label">Python 可用</span>
-              <strong class="env-item__value">{{ environmentInfo?.python_available ? '是' : '否 / 未知' }}</strong>
+              <span class="env-item__label">Python ???</span>
+              <strong class="env-item__value">{{ environmentInfo?.python_available ? "??" : "??/ ???" }}</strong>
             </div>
             <div class="env-item">
-              <span class="env-item__label">内嵌 Python 包</span>
-              <strong class="env-item__value">{{ environmentInfo?.has_embedded_python ? '已提供' : '未检测到' }}</strong>
+              <span class="env-item__label">??? Python ??/span>
+              <strong class="env-item__value">{{ environmentInfo?.has_embedded_python ? "?????" : "??????" }}</strong>
             </div>
             <div class="env-item env-item--wide">
-              <span class="env-item__label">项目根目录</span>
-              <strong class="env-item__value env-item__value--path">{{ environmentInfo?.project_root || '未获取到' }}</strong>
+              <span class="env-item__label">????????/span>
+              <strong class="env-item__value env-item__value--path">{{ environmentInfo?.project_root || "??????" }}</strong>
+            </div>
+            <div class="env-item env-item--wide">
+              <div class="timeout-config__header">
+                <span class="env-item__label">{{ "\u670d\u52a1\u8d85\u65f6\u9608\u503c" }}</span>
+                <strong class="env-item__value">{{ serviceActionTimeoutLabel }}</strong>
+              </div>
+              <div class="timeout-config__controls">
+                <n-input-number
+                  :value="serviceActionTimeoutSeconds"
+                  :min="TIMEOUT_MIN_SECONDS"
+                  :max="TIMEOUT_MAX_SECONDS"
+                  :step="5"
+                  size="small"
+                  class="timeout-config__input"
+                  @update:value="handleTimeoutSecondsChange"
+                />
+                <div class="timeout-config__presets">
+                  <n-button
+                    v-for="preset in timeoutPresets"
+                    :key="preset"
+                    size="small"
+                    secondary
+                    :type="serviceActionTimeoutSeconds === preset ? 'primary' : 'default'"
+                    @click="applyTimeoutPreset(preset)"
+                  >
+                    {{ preset }}s
+                  </n-button>
+                </div>
+              </div>
+              <p class="timeout-config__hint">
+                {{ "\u8303\u56f4\uff1a" }}{{ TIMEOUT_MIN_SECONDS }}-{{ TIMEOUT_MAX_SECONDS }}{{ "\u79d2\uff0c\u4f1a\u4fdd\u5b58\u5230\u672c\u5730\u8bbe\u7f6e\u3002\u9608\u503c\u8fc7\u5c0f\u53ef\u80fd\u5bfc\u81f4\u8bef\u62a5\u8d85\u65f6\u3002" }}
+              </p>
             </div>
           </div>
         </article>
@@ -390,7 +419,10 @@ interface ServiceCardViewModel extends ManagedServiceStatus {
 
 const AUTO_REFRESH_INTERVAL = 8000
 const SERVICE_STATE_STICKY_MS = 10000
-const SERVICE_ACTION_TIMEOUT_MS = 15000
+const DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS = 15
+const TIMEOUT_MIN_SECONDS = 5
+const TIMEOUT_MAX_SECONDS = 120
+const TIMEOUT_STORAGE_KEY = 'plotpilot.serviceActionTimeoutSeconds'
 
 const message = useMessage()
 const loading = ref(false)
@@ -410,6 +442,8 @@ const logLevelFilter = ref<LogLevelFilter>('all')
 const logAutoTailEnabled = ref(true)
 const logViewerRef = ref<HTMLElement | null>(null)
 const transitionClock = ref(Date.now())
+const timeoutPresets = [15, 30, 45, 60]
+const serviceActionTimeoutSeconds = ref(DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS)
 const serviceTransitions = ref<Record<ServiceId, ServiceTransitionSnapshot>>({
   backend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null, startedAt: null, durationMs: null },
   frontend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null, startedAt: null, durationMs: null },
@@ -495,6 +529,9 @@ const lastRefreshText = computed(() => {
   return lastRefreshAt.value.toLocaleTimeString('zh-CN', { hour12: false })
 })
 
+const serviceActionTimeoutMs = computed(() => serviceActionTimeoutSeconds.value * 1000)
+const serviceActionTimeoutLabel = computed(() => formatDuration(serviceActionTimeoutMs.value))
+
 function pushLog(level: ActionLogItem['level'], title: string, messageText: string) {
   actionLogs.value.unshift({
     id: Date.now() + Math.floor(Math.random() * 1000),
@@ -509,6 +546,32 @@ function pushLog(level: ActionLogItem['level'], title: string, messageText: stri
 function clearLogFilters() {
   logSearch.value = ''
   logLevelFilter.value = 'all'
+}
+
+function clampTimeoutSeconds(value: number) {
+  return Math.min(TIMEOUT_MAX_SECONDS, Math.max(TIMEOUT_MIN_SECONDS, Math.round(value)))
+}
+
+function loadTimeoutSecondsPreference() {
+  if (typeof window === 'undefined') return DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS
+  const raw = window.localStorage.getItem(TIMEOUT_STORAGE_KEY)
+  const parsed = raw ? Number(raw) : NaN
+  return Number.isFinite(parsed) ? clampTimeoutSeconds(parsed) : DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS
+}
+
+function persistTimeoutSecondsPreference(value: number) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(TIMEOUT_STORAGE_KEY, String(value))
+}
+
+function handleTimeoutSecondsChange(value: number | null) {
+  const nextValue = clampTimeoutSeconds(value ?? DEFAULT_SERVICE_ACTION_TIMEOUT_SECONDS)
+  serviceActionTimeoutSeconds.value = nextValue
+  persistTimeoutSecondsPreference(nextValue)
+}
+
+function applyTimeoutPreset(value: number) {
+  handleTimeoutSecondsChange(value)
 }
 
 function getServiceTransition(serviceId: ServiceId): ServiceTransitionSnapshot {
@@ -559,7 +622,7 @@ async function runServiceActionWithTimeout(action: ServiceAction, serviceId: Ser
   return new Promise<Awaited<ReturnType<typeof servicesApi.runAction>>>((resolve, reject) => {
     const timer = window.setTimeout(() => {
       reject(new Error(getActionTimeoutMessage(action)))
-    }, SERVICE_ACTION_TIMEOUT_MS)
+    }, serviceActionTimeoutMs.value)
 
     void servicesApi.runAction(action, serviceId)
       .then(result => {
@@ -590,7 +653,7 @@ function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardVi
   let recommendation = service.running ? '\u53ef\u76f4\u63a5\u6253\u5f00\u6216\u91cd\u542f' : '\u5efa\u8bae\u5148\u542f\u52a8\u6216\u91cd\u542f'
   const elapsedMs = getTransitionElapsedMs(transition)
   let durationLabel = `\u8037\u65f6\uff1a${formatDuration(elapsedMs)}`
-  let timeoutHint = `\u8d85\u65f6\u9608\u503c\uff1a${formatDuration(SERVICE_ACTION_TIMEOUT_MS)}`
+  let timeoutHint = `\u8d85\u65f6\u9608\u503c\uff1a${serviceActionTimeoutLabel.value}`
 
   if (transition.phase === 'starting') {
     visualState = 'starting'
@@ -829,6 +892,7 @@ function toggleLogAutoTail() {
 }
 
 onMounted(() => {
+  serviceActionTimeoutSeconds.value = loadTimeoutSecondsPreference()
   void refreshDashboard()
   startPolling()
   startLogTailPolling()
@@ -1180,6 +1244,39 @@ onBeforeUnmount(() => {
 
 .env-item--wide {
   grid-column: 1 / -1;
+}
+
+.timeout-config__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.timeout-config__controls {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.timeout-config__input {
+  width: 140px;
+}
+
+.timeout-config__presets {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.timeout-config__hint {
+  margin: 10px 0 0;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .log-toolbar {
