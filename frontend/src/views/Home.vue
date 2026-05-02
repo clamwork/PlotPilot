@@ -91,6 +91,8 @@
               <div class="service-state-row">
                 <span class="service-state-row__label">{{ "\u72b6\u6001\u673a\u9636\u6bb5" }}</span>
                 <strong>{{ service.stateHeadline }}</strong>
+                <span class="service-state-row__meta">{{ service.durationLabel }}</span>
+                <span class="service-state-row__meta">{{ service.timeoutHint }}</span>
               </div>
             </div>
             <div class="service-indicator" :class="service.indicatorClass" />
@@ -359,6 +361,8 @@ interface ServiceTransitionSnapshot {
   lastOutcome: 'success' | 'error' | 'timeout' | null
   message: string
   changedAt: number | null
+  startedAt: number | null
+  durationMs: number | null
 }
 
 interface ParsedLogEntry {
@@ -375,6 +379,8 @@ interface ServiceCardViewModel extends ManagedServiceStatus {
   stateHeadline: string
   statusDetail: string
   recommendation: string
+  durationLabel: string
+  timeoutHint: string
   indicatorClass: string[]
   isTransitioning: boolean
   canStart: boolean
@@ -396,15 +402,17 @@ const runtimeLogs = ref<RuntimeLogSnapshot | null>(null)
 const lastRefreshAt = ref<Date | null>(null)
 const pollTimer = ref<number | null>(null)
 const logTailTimer = ref<number | null>(null)
+const transitionClockTimer = ref<number | null>(null)
 const actionLogs = ref<ActionLogItem[]>([])
 const activeAction = ref<{ serviceId: ServiceId; action: ServiceAction } | null>(null)
 const logSearch = ref('')
 const logLevelFilter = ref<LogLevelFilter>('all')
 const logAutoTailEnabled = ref(true)
 const logViewerRef = ref<HTMLElement | null>(null)
+const transitionClock = ref(Date.now())
 const serviceTransitions = ref<Record<ServiceId, ServiceTransitionSnapshot>>({
-  backend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null },
-  frontend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null },
+  backend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null, startedAt: null, durationMs: null },
+  frontend: { phase: 'idle', lastAction: null, lastOutcome: null, message: '', changedAt: null, startedAt: null, durationMs: null },
 })
 
 const serviceCards = computed<ServiceCardViewModel[]>(() => {
@@ -532,6 +540,21 @@ function getActionTimeoutMessage(action: ServiceAction) {
   return `${getActionLabel(action)}\u8d85\u65f6\uff0c\u8bf7\u68c0\u67e5\u670d\u52a1\u8fdb\u7a0b\u4e0e\u65e5\u5fd7\u3002`
 }
 
+function formatDuration(ms: number | null) {
+  if (!ms || ms < 0) return '\u672a\u8bb0\u5f55'
+  const totalSeconds = Math.max(1, Math.round(ms / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return minutes > 0 ? `${minutes}\u5206 ${seconds}\u79d2` : `${seconds}\u79d2`
+}
+
+function getTransitionElapsedMs(snapshot: ServiceTransitionSnapshot) {
+  if (snapshot.phase !== 'idle' && snapshot.startedAt) {
+    return transitionClock.value - snapshot.startedAt
+  }
+  return snapshot.durationMs
+}
+
 async function runServiceActionWithTimeout(action: ServiceAction, serviceId: ServiceId) {
   return new Promise<Awaited<ReturnType<typeof servicesApi.runAction>>>((resolve, reject) => {
     const timer = window.setTimeout(() => {
@@ -565,6 +588,9 @@ function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardVi
   let stateHeadline = service.running ? '\u7a33\u5b9a\u8fd0\u884c' : '\u7b49\u5f85\u542f\u52a8'
   let statusDetail = service.detail
   let recommendation = service.running ? '\u53ef\u76f4\u63a5\u6253\u5f00\u6216\u91cd\u542f' : '\u5efa\u8bae\u5148\u542f\u52a8\u6216\u91cd\u542f'
+  const elapsedMs = getTransitionElapsedMs(transition)
+  let durationLabel = `\u8037\u65f6\uff1a${formatDuration(elapsedMs)}`
+  let timeoutHint = `\u8d85\u65f6\u9608\u503c\uff1a${formatDuration(SERVICE_ACTION_TIMEOUT_MS)}`
 
   if (transition.phase === 'starting') {
     visualState = 'starting'
@@ -634,6 +660,8 @@ function buildServiceCardViewModel(service: ManagedServiceStatus): ServiceCardVi
     stateHeadline,
     statusDetail,
     recommendation,
+    durationLabel,
+    timeoutHint,
     indicatorClass: [
       `service-indicator--${visualState}`,
       ...(isTransitioning ? ['service-indicator--pulse'] : []),
@@ -690,6 +718,8 @@ async function runServiceAction(action: ServiceAction, serviceId: ServiceId) {
     lastAction: action,
     lastOutcome: null,
     message: '',
+    startedAt: Date.now(),
+    durationMs: null,
   })
   try {
     const result = await runServiceActionWithTimeout(action, serviceId)
@@ -699,6 +729,7 @@ async function runServiceAction(action: ServiceAction, serviceId: ServiceId) {
       lastAction: action,
       lastOutcome: 'success',
       message: result.message,
+      durationMs: Date.now() - (getServiceTransition(serviceId).startedAt || Date.now()),
     })
     pushLog('success', `${actionLabel} ${serviceId}`, `${result.message}${result.url ? `：${result.url}` : ''}`)
     message.success(result.message)
@@ -711,6 +742,7 @@ async function runServiceAction(action: ServiceAction, serviceId: ServiceId) {
       lastAction: action,
       lastOutcome: isActionTimeoutError(action, error) ? 'timeout' : 'error',
       message: text,
+      durationMs: Date.now() - (getServiceTransition(serviceId).startedAt || Date.now()),
     })
     pushLog(isActionTimeoutError(action, error) ? 'warning' : 'error', `${serviceId} \u64cd\u4f5c\u5931\u8d25`, text)
     isActionTimeoutError(action, error) ? message.warning(text) : message.error(text)
@@ -740,6 +772,21 @@ function stopLogTailPolling() {
     window.clearInterval(logTailTimer.value)
     logTailTimer.value = null
   }
+}
+
+function stopTransitionClock() {
+  if (transitionClockTimer.value !== null) {
+    window.clearInterval(transitionClockTimer.value)
+    transitionClockTimer.value = null
+  }
+}
+
+function startTransitionClock() {
+  stopTransitionClock()
+  transitionClock.value = Date.now()
+  transitionClockTimer.value = window.setInterval(() => {
+    transitionClock.value = Date.now()
+  }, 1000)
 }
 
 function startPolling() {
@@ -785,12 +832,14 @@ onMounted(() => {
   void refreshDashboard()
   startPolling()
   startLogTailPolling()
+  startTransitionClock()
   pushLog('info', '控制台已启动', '本地服务控制台已就绪。')
 })
 
 onBeforeUnmount(() => {
   stopPolling()
   stopLogTailPolling()
+  stopTransitionClock()
 })
 </script>
 
@@ -1013,6 +1062,14 @@ onBeforeUnmount(() => {
 
 .service-state-row__label {
   color: var(--app-text-muted);
+}
+
+.service-state-row__meta {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
 }
 
 .service-indicator {
