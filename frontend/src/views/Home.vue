@@ -170,16 +170,79 @@
 
         <article class="info-card">
           <div class="section-headline">
-            <h3 class="info-card__title">真实运行日志</h3>
+            <h3 class="info-card__title">日志筛选面板</h3>
             <n-button text type="primary" @click="refreshDashboard">
               刷新日志
             </n-button>
           </div>
+
+          <div class="log-toolbar">
+            <n-input
+              v-model:value="logSearch"
+              clearable
+              placeholder="搜索日志关键词"
+              class="log-toolbar__search"
+            />
+            <div class="log-toolbar__toggles">
+              <n-button
+                size="small"
+                secondary
+                :type="logLevelFilter === 'all' ? 'primary' : 'default'"
+                @click="logLevelFilter = 'all'"
+              >
+                全部
+              </n-button>
+              <n-button
+                size="small"
+                secondary
+                :type="logLevelFilter === 'error' ? 'error' : 'default'"
+                @click="logLevelFilter = 'error'"
+              >
+                仅错误
+              </n-button>
+              <n-button
+                size="small"
+                secondary
+                :type="logLevelFilter === 'warning' ? 'warning' : 'default'"
+                @click="logLevelFilter = 'warning'"
+              >
+                仅警告
+              </n-button>
+              <n-button size="small" quaternary @click="clearLogFilters">
+                清空筛选
+              </n-button>
+            </div>
+          </div>
+
+          <div class="log-badges">
+            <n-tag size="small" :bordered="false" type="default">总计 {{ runtimeLogs?.line_count ?? 0 }}</n-tag>
+            <n-tag size="small" :bordered="false" type="error">ERROR {{ logStats.error }}</n-tag>
+            <n-tag size="small" :bordered="false" type="warning">WARNING {{ logStats.warning }}</n-tag>
+            <n-tag size="small" :bordered="false" type="info">INFO {{ logStats.info }}</n-tag>
+            <n-tag size="small" :bordered="false" type="success">显示 {{ filteredLogEntries.length }}</n-tag>
+          </div>
+
           <div class="log-summary">
             <span>日志路径：{{ runtimeLogs?.path || '未获取到' }}</span>
-            <span>总行数：{{ runtimeLogs?.line_count ?? 0 }}</span>
+            <span>筛选状态：{{ logFilterSummary }}</span>
           </div>
-          <pre class="health-preview">{{ runtimeLogText }}</pre>
+
+          <div class="log-viewer">
+            <div v-if="filteredLogEntries.length" class="log-lines">
+              <div
+                v-for="entry in filteredLogEntries"
+                :key="entry.id"
+                class="log-line"
+                :class="`log-line--${entry.level}`"
+              >
+                <span class="log-line__badge">{{ entry.levelLabel }}</span>
+                <code class="log-line__text">{{ entry.text }}</code>
+              </div>
+            </div>
+            <div v-else class="log-empty">
+              当前筛选条件下没有匹配日志。
+            </div>
+          </div>
         </article>
       </section>
 
@@ -196,13 +259,13 @@
         <article class="info-card">
           <div class="section-headline">
             <h3 class="info-card__title">日志说明</h3>
-            <n-tag size="small" :bordered="false" type="warning">实时 tail</n-tag>
+            <n-tag size="small" :bordered="false" type="warning">高亮与筛选</n-tag>
           </div>
           <ul class="info-list">
             <li>这里读取的是本地真实日志文件，不是模拟数据。</li>
-            <li>发布版优先读取 AppData 下的 <code>data/logs/aitext.log</code>。</li>
-            <li>开发模式回退读取仓库内的 <code>logs/aitext.log</code>。</li>
-            <li>默认展示最后 200 行，便于快速定位最近崩溃或重启问题。</li>
+            <li>支持按关键词搜索，也支持只看 ERROR 或 WARNING。</li>
+            <li>日志颜色遵循语义级别，便于快速扫出异常。</li>
+            <li>默认展示最后 200 行，适合定位最近崩溃、超时与重启问题。</li>
           </ul>
         </article>
       </section>
@@ -234,9 +297,9 @@
             <n-tag size="small" :bordered="false" type="success">推荐</n-tag>
           </div>
           <ul class="info-list">
-            <li>先观察状态灯与健康信息，再决定执行启动、停止或重启。</li>
-            <li>如果浏览器入口失效，优先重启 Backend API，再重新打开入口。</li>
-            <li>开启自动巡检后，控制台会持续轮询并展示最新状态。</li>
+            <li>先看 ERROR / WARNING 数量，再决定是否重启服务。</li>
+            <li>遇到启动失败时，先搜索端口、traceback、exception 等关键词。</li>
+            <li>若浏览器入口失效，优先筛选 ERROR，并配合后端健康信息一起看。</li>
             <li>业务页面仍在浏览器中访问，桌面端只承担本地运维职责。</li>
           </ul>
         </article>
@@ -266,6 +329,16 @@ interface ActionLogItem {
   level: 'info' | 'success' | 'warning' | 'error'
 }
 
+type LogLevelFilter = 'all' | 'error' | 'warning'
+type ParsedLogLevel = 'error' | 'warning' | 'info' | 'plain'
+
+interface ParsedLogEntry {
+  id: number
+  text: string
+  level: ParsedLogLevel
+  levelLabel: string
+}
+
 const AUTO_REFRESH_INTERVAL = 8000
 
 const message = useMessage()
@@ -279,6 +352,8 @@ const lastRefreshAt = ref<Date | null>(null)
 const pollTimer = ref<number | null>(null)
 const actionLogs = ref<ActionLogItem[]>([])
 const activeAction = ref<{ serviceId: ServiceId; action: ServiceAction } | null>(null)
+const logSearch = ref('')
+const logLevelFilter = ref<LogLevelFilter>('all')
 
 const serviceCards = computed<ManagedServiceStatus[]>(() => {
   if (!overview.value) return []
@@ -297,11 +372,60 @@ const healthPreview = computed(() => {
   return JSON.stringify(healthPayload.value, null, 2)
 })
 
-const runtimeLogText = computed(() => {
-  if (!runtimeLogs.value) return '尚未读取日志。'
-  if (!runtimeLogs.value.exists) return '当前日志文件尚未生成。'
-  if (!runtimeLogs.value.lines.length) return '日志文件存在，但暂无内容。'
-  return runtimeLogs.value.lines.join('\n')
+const parsedLogEntries = computed<ParsedLogEntry[]>(() => {
+  const lines = runtimeLogs.value?.lines ?? []
+  return lines.map((text, index) => {
+    const upper = text.toUpperCase()
+    let level: ParsedLogLevel = 'plain'
+    let levelLabel = 'LOG'
+
+    if (upper.includes('ERROR') || upper.includes('CRITICAL') || upper.includes('TRACEBACK')) {
+      level = 'error'
+      levelLabel = 'ERROR'
+    } else if (upper.includes('WARNING') || upper.includes('WARN')) {
+      level = 'warning'
+      levelLabel = 'WARN'
+    } else if (upper.includes('INFO')) {
+      level = 'info'
+      levelLabel = 'INFO'
+    }
+
+    return {
+      id: index,
+      text,
+      level,
+      levelLabel,
+    }
+  })
+})
+
+const filteredLogEntries = computed(() => {
+  const keyword = logSearch.value.trim().toLowerCase()
+  return parsedLogEntries.value.filter(entry => {
+    if (logLevelFilter.value === 'error' && entry.level !== 'error') return false
+    if (logLevelFilter.value === 'warning' && entry.level !== 'warning') return false
+    if (keyword && !entry.text.toLowerCase().includes(keyword)) return false
+    return true
+  })
+})
+
+const logStats = computed(() => {
+  const stats = { error: 0, warning: 0, info: 0 }
+  for (const entry of parsedLogEntries.value) {
+    if (entry.level === 'error') stats.error += 1
+    else if (entry.level === 'warning') stats.warning += 1
+    else if (entry.level === 'info') stats.info += 1
+  }
+  return stats
+})
+
+const logFilterSummary = computed(() => {
+  const parts: string[] = []
+  if (logLevelFilter.value === 'all') parts.push('全部级别')
+  if (logLevelFilter.value === 'error') parts.push('仅 ERROR')
+  if (logLevelFilter.value === 'warning') parts.push('仅 WARNING')
+  if (logSearch.value.trim()) parts.push(`关键词：${logSearch.value.trim()}`)
+  return parts.join(' / ')
 })
 
 const lastRefreshText = computed(() => {
@@ -318,6 +442,11 @@ function pushLog(level: ActionLogItem['level'], title: string, messageText: stri
     level,
   })
   actionLogs.value = actionLogs.value.slice(0, 10)
+}
+
+function clearLogFilters() {
+  logSearch.value = ''
+  logLevelFilter.value = 'all'
 }
 
 async function refreshDashboard(showToast = false) {
@@ -683,6 +812,28 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
+.log-toolbar {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.log-toolbar__search {
+  max-width: 360px;
+}
+
+.log-toolbar__toggles,
+.log-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.log-badges {
+  margin-top: 14px;
+}
+
 .info-list {
   margin: 16px 0 0;
   padding-left: 20px;
@@ -699,16 +850,85 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.log-viewer,
 .health-preview {
-  margin: 16px 0 0;
-  padding: 18px;
+  margin-top: 16px;
   border-radius: 18px;
   background: #0f172a;
+  overflow: auto;
+}
+
+.log-viewer {
+  min-height: 320px;
+  max-height: 520px;
+  padding: 14px;
+}
+
+.log-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.log-line {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.log-line--error {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+.log-line--warning {
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(120, 53, 15, 0.28);
+}
+
+.log-line--info {
+  border-color: rgba(96, 165, 250, 0.22);
+  background: rgba(30, 64, 175, 0.18);
+}
+
+.log-line__badge {
+  min-width: 54px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+.log-line__text {
+  color: #dbeafe;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+}
+
+.log-empty {
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.health-preview {
+  padding: 18px;
   color: #dbeafe;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.65;
-  overflow: auto;
   min-height: 260px;
 }
 
