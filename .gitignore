@@ -155,3 +155,8 @@ mcps/
 *.rs.bk
 *.orig
 *.rej
+
+# SpectrAI worktree isolation
+.spectrai-worktrees/
+
+.idea/

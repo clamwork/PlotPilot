@@ -156,21 +156,21 @@
         </article>
         <article class="info-card">
           <div class="section-headline">
-            <h3 class="info-card__title">??????</h3>
-            <n-tag size="small" :bordered="false" type="info">??????</n-tag>
+            <h3 class="info-card__title">运行环境</h3>
+            <n-tag size="small" :bordered="false" type="info">本地环境</n-tag>
           </div>
           <div class="env-grid">
             <div class="env-item">
-              <span class="env-item__label">Python ???</span>
-              <strong class="env-item__value">{{ environmentInfo?.python_available ? "??" : "??/ ???" }}</strong>
+              <span class="env-item__label">Python 可用</span>
+              <strong class="env-item__value">{{ environmentInfo?.python_available ? '正常' : '缺失 / 未检测' }}</strong>
             </div>
             <div class="env-item">
-              <span class="env-item__label">??? Python ??/span>
-              <strong class="env-item__value">{{ environmentInfo?.has_embedded_python ? "?????" : "??????" }}</strong>
+              <span class="env-item__label">内置 Python</span>
+              <strong class="env-item__value">{{ environmentInfo?.has_embedded_python ? '已就绪' : '未发现' }}</strong>
             </div>
             <div class="env-item env-item--wide">
-              <span class="env-item__label">????????/span>
-              <strong class="env-item__value env-item__value--path">{{ environmentInfo?.project_root || "??????" }}</strong>
+              <span class="env-item__label">项目根目录</span>
+              <strong class="env-item__value env-item__value--path">{{ environmentInfo?.project_root || '未获取到' }}</strong>
             </div>
             <div class="env-item env-item--wide">
               <div class="timeout-config__header">
@@ -231,7 +231,7 @@
             <n-input
               v-model:value="logSearch"
               clearable
-              placeholder="搜索日志关键词"
+              placeholder="搜索日志关键字"
               class="log-toolbar__search"
             />
             <div class="log-toolbar__toggles">
